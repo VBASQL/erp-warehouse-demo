@@ -1,0 +1,1741 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Warehouse System — Demo</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800;900&family=Spline+Sans+Mono:wght@400;500;600&family=Sora:wght@600;700;800;900&display=swap" rel="stylesheet">
+<script>
+tailwind.config = { theme: { extend: {
+  fontFamily: { sans:['Archivo','sans-serif'], display:['Sora','sans-serif'], mono:['Spline Sans Mono','monospace'] },
+  colors: { ink:'#0f1419', panel:'#f4f6f8' }
+}}}
+</script>
+<style>
+  :root{--blue:#1a73e8;--green:#16a34a;--amber:#d97706;--red:#dc2626;}
+  body{background:#e9edf1;color:#0f1419;font-family:'Archivo',sans-serif;}
+  [x-cloak]{display:none!important}
+  ::-webkit-scrollbar{width:9px;height:9px}
+  ::-webkit-scrollbar-thumb{background:#c2cbd4;border-radius:6px}
+  ::-webkit-scrollbar-track{background:transparent}
+  .order-card{transition:transform .08s,box-shadow .12s,border-color .12s}
+  .order-card:not(.locked):hover{transform:translateY(-1px);box-shadow:0 4px 14px rgba(15,20,25,.12)}
+  .dz.drag-over{background:#e7f0fe;outline:2px dashed var(--blue);outline-offset:-4px}
+  .sortable-ghost{opacity:.35}
+  .ref-target{cursor:pointer}
+  .ref-target.ref-hover{outline:2px solid var(--blue);outline-offset:2px;border-radius:6px}
+  .ref-pinned{outline:2px solid var(--blue)!important;outline-offset:2px;border-radius:6px}
+  .num-pin{color:#fff;border-radius:50%;width:26px;height:26px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:12px;box-shadow:0 1px 4px rgba(0,0,0,.4);border:2px solid #fff}
+  .grain{background-image:radial-gradient(circle at 1px 1px,rgba(15,20,25,.035) 1px,transparent 0);background-size:18px 18px}
+  .pulse-warn{animation:pw 1.4s infinite}
+  @keyframes pw{0%,100%{box-shadow:0 0 0 0 rgba(220,38,38,.4)}50%{box-shadow:0 0 0 5px rgba(220,38,38,0)}}
+  .modal-bg{background:rgba(15,20,25,.5);backdrop-filter:blur(2px)}
+  .fade-in{animation:fi .2s ease}
+  @keyframes fi{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+  .tablet{width:860px;max-width:96vw;background:#1b1f24;border-radius:34px;padding:16px;box-shadow:0 24px 60px rgba(15,20,25,.35)}
+  .tablet-screen{background:#eef1f4;border-radius:18px;overflow:hidden;height:76vh;min-height:580px;position:relative}
+  .tablet-cam{width:7px;height:7px;border-radius:50%;background:#3a3f45;margin:0 auto 8px}
+  .big-btn{transition:transform .07s,filter .12s}.big-btn:active{transform:scale(.96)}
+  table.cfg th{font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:#8a93a0;text-align:left;padding:6px 10px}
+  table.cfg td{padding:6px 10px;border-top:1px solid #eef1f4;font-size:13px}
+  .stab-grad{background:linear-gradient(90deg,#dc2626,#d97706,#16a34a)}
+  @media print{body *{visibility:hidden}#printArea,#printArea *{visibility:visible}#printArea{position:absolute;inset:0;padding:24px}}
+</style>
+</head>
+<body class="grain" x-data="app()" x-init="init()" x-cloak>
+
+<!-- ===================== TOP NAV ===================== -->
+<header class="bg-ink text-white px-5 py-2.5 flex items-center gap-5 sticky top-0 z-[1000] shadow-lg print:hidden">
+  <div class="flex items-center gap-2.5">
+    <div class="w-8 h-8 rounded-md bg-[var(--blue)] flex items-center justify-center font-display font-extrabold text-lg">W</div>
+    <div>
+      <div class="font-display font-extrabold text-lg leading-none tracking-tight">Warehouse System</div>
+      <div class="text-[10px] text-gray-400 leading-none mt-0.5 font-mono">beverage wholesale · demo</div>
+    </div>
+  </div>
+  <nav class="flex items-center gap-1 bg-white/10 rounded-lg p-0.5 ml-3">
+    <template x-for="s in screens" :key="s.id">
+      <button @click="screen=s.id; onScreen()" class="px-3 py-1.5 rounded-md text-xs font-semibold transition flex items-center gap-1.5"
+        :class="screen===s.id?'bg-white text-ink':'text-gray-300 hover:text-white'">
+        <span x-text="s.icon"></span><span x-text="s.label"></span>
+      </button>
+    </template>
+  </nav>
+  <div class="ml-auto flex items-center gap-3">
+    <div x-show="screen==='dashboard'" class="flex items-center gap-1.5">
+      <span class="text-xs text-gray-400">Planning</span>
+      <input type="date" x-model="planDate" class="bg-white/10 text-white text-xs rounded px-2 py-1 border border-white/15 focus:outline-none">
+    </div>
+    <div class="text-[10px] text-gray-500 font-mono hidden xl:block">Alt-click any element → reference in chat</div>
+  </div>
+</header>
+
+<!-- ===================== SCREEN: DASHBOARD ===================== -->
+<main x-show="screen==='dashboard'" class="grid h-[calc(100vh-53px)]" style="grid-template-columns:320px 1fr 384px">
+  <!-- LEFT: ORDER QUEUE -->
+  <section class="bg-white border-r border-gray-200 flex flex-col min-h-0">
+    <div class="px-4 pt-3.5 pb-2 border-b border-gray-100">
+      <div class="flex items-center justify-between">
+        <h2 class="font-display font-bold text-sm tracking-tight">Order Queue</h2>
+        <span class="text-[10px] font-mono text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded" x-text="openOrders().length+' open'"></span>
+      </div>
+      <div class="flex flex-wrap gap-1 mt-2.5">
+        <template x-for="f in filterChips()" :key="f">
+          <button @click="filter=f" class="text-[10px] font-semibold px-2 py-1 rounded-full border transition"
+            :class="filter===f?'bg-ink text-white border-ink':'bg-white text-gray-600 border-gray-200 hover:border-gray-400'" x-text="f"></button>
+        </template>
+      </div>
+      <div class="flex items-center gap-1.5 mt-2">
+        <span class="text-[10px] text-gray-400 uppercase tracking-wide font-semibold">Sort</span>
+        <select x-model="sort" class="text-xs border border-gray-200 rounded px-1.5 py-1 flex-1 focus:outline-none">
+          <option value="time">Time received</option><option value="area">Area</option><option value="proximity">Proximity (zip)</option>
+        </select>
+      </div>
+    </div>
+    <div class="flex-1 overflow-y-auto px-3 py-2.5 space-y-2 min-h-0">
+      <template x-for="o in sortedQueue()" :key="o.id">
+        <div class="order-card ref-target relative rounded-lg border bg-white px-3 py-2.5"
+          :class="(isLocked(o)?'locked opacity-55 border-gray-200 ':'cursor-grab border-gray-200 ')+(selectedQ.includes(o.id)?'ring-2 ring-[var(--blue)]':'')"
+          :data-refid="'order:'+o.id"
+          :draggable="!isLocked(o)"
+          :title="o.kind==='draft'?'Awaiting payment':(o.kind==='backorder'?'Back order — locked until in stock':'')"
+          @dragstart="dragStart($event,o)" @dragend="dragId=null"
+          @click="!isLocked(o) && $event.detail>0 && toggleSelect(o.id)">
+          <div class="flex items-start justify-between gap-2">
+            <div>
+              <div class="font-mono text-[11px] font-semibold text-gray-500" x-text="o.id"></div>
+              <div class="font-semibold text-[13px] leading-tight" x-text="o.customer"></div>
+            </div>
+            <span x-html="kindBadge(o)"></span>
+          </div>
+          <div class="flex items-center justify-between mt-1.5">
+            <span class="text-[10px] text-gray-400" x-text="o.area+' · '+o.zip"></span>
+            <span class="text-[10px] font-mono text-gray-600" x-text="orderCases(o)+' cs · '+orderFrac(o).toFixed(1)+' pal'"></span>
+          </div>
+          <div class="flex gap-1 mt-1.5">
+            <template x-for="cat in orderCats(o)" :key="cat">
+              <span class="w-2 h-2 rounded-full inline-block" :style="'background:'+CAT_COLOR[cat]" :title="cat"></span>
+            </template>
+          </div>
+          <div x-show="isFuture(o)" class="mt-1 text-[9px] text-[var(--blue)] font-semibold">⚑ future-dated</div>
+        </div>
+      </template>
+      <!-- category dot legend -->
+      <div class="mt-2 rounded-lg bg-gray-50 border border-gray-100 px-2.5 py-2">
+        <div class="text-[9px] uppercase tracking-wide font-bold text-gray-400 mb-1">Dots = product categories in order</div>
+        <div class="flex flex-wrap gap-x-3 gap-y-1">
+          <template x-for="[cat,col] in Object.entries(CAT_COLOR)" :key="cat">
+            <span class="inline-flex items-center gap-1 text-[10px] text-gray-600"><span class="w-2 h-2 rounded-full inline-block" :style="'background:'+col"></span><span x-text="cat"></span></span>
+          </template>
+        </div>
+      </div>
+      <!-- assign-to-route action bar -->
+      <div x-show="selectedQ.length>=1" class="sticky bottom-0 -mx-3 px-3 py-2 bg-ink text-white text-xs rounded-t" @click.outside="assignMenu=false">
+        <div class="flex items-center gap-2">
+          <span x-text="selectedQ.length+(selectedQ.length===1?' order':' orders')+' selected'"></span>
+          <div class="ml-auto relative">
+            <button @click="assignMenu=!assignMenu" class="bg-[var(--blue)] px-2.5 py-1 rounded font-semibold">Assign to route ▾</button>
+            <div x-show="assignMenu" x-transition class="absolute right-0 bottom-full mb-1 w-52 bg-white text-ink rounded-lg shadow-xl border border-gray-200 overflow-hidden z-20">
+              <template x-if="routes.length===0">
+                <div class="px-3 py-2 text-[11px] text-gray-400">No routes yet — create one first.</div>
+              </template>
+              <template x-for="r in routes" :key="r.id">
+                <button @click="assignSelectedTo(r.id)" class="w-full text-left px-3 py-2 hover:bg-gray-50 flex items-center gap-2 border-b border-gray-50">
+                  <span class="w-2.5 h-2.5 rounded-full" :style="'background:'+r.color"></span>
+                  <span class="font-semibold truncate" x-text="r.name"></span>
+                  <span class="ml-auto text-[10px] text-gray-400" x-text="r.stops.length+' stops'"></span>
+                </button>
+              </template>
+              <button @click="openRouteConfig(null); assignMenu=false" class="w-full text-left px-3 py-2 text-[var(--blue)] font-semibold hover:bg-blue-50">+ New route…</button>
+            </div>
+          </div>
+          <button @click="selectedQ=[]" class="text-gray-300 underline">clear</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- CENTER: ROUTE WORKSPACE -->
+  <section class="flex flex-col min-h-0 bg-panel">
+    <div class="px-4 py-2.5 border-b border-gray-200 bg-white flex items-center gap-2">
+      <h2 class="font-display font-bold text-sm tracking-tight">Route Workspace</h2>
+      <button @click="openRouteConfig(null)" class="ml-1 text-xs font-semibold bg-[var(--blue)] text-white px-2.5 py-1.5 rounded-md hover:brightness-110 active:scale-95 transition">+ New Route</button>
+      <button @click="openStatusModal()" class="ml-auto text-xs font-semibold border border-gray-200 text-ink px-2.5 py-1.5 rounded-md hover:bg-gray-50 flex items-center gap-1.5">
+        📟 Picking status
+        <span x-show="pickingBadge()>0" class="bg-[#8b5cf6] text-white text-[9px] font-bold rounded-full px-1.5 py-0.5" x-text="pickingBadge()"></span>
+      </button>
+    </div>
+
+    <!-- DEMO MAP STRIP (always visible while arranging) -->
+    <div class="border-b border-gray-200 bg-[#dfe7ee] shrink-0" x-html="demoMapHtml()"></div>
+
+    <!-- ROUTE LIST -->
+    <div class="flex-1 overflow-y-auto p-3.5 space-y-3.5 min-h-0">
+      <template x-if="routes.length===0">
+        <div class="h-full flex flex-col items-center justify-center text-center text-gray-400 gap-2 py-20">
+          <div class="text-4xl">🚚</div><div class="text-sm font-semibold">No routes yet</div>
+          <div class="text-xs max-w-[220px]">Click <span class="font-semibold text-[var(--blue)]">+ New Route</span>, then drag orders from the queue.</div>
+        </div>
+      </template>
+      <template x-for="r in routes" :key="r.id">
+        <div class="ref-target rounded-xl border bg-white overflow-hidden" :data-refid="'route:'+r.id"
+          :class="selectedRoute===r.id?'ref-pinned':'border-gray-200'" :style="'border-left:4px solid '+r.color">
+          <!-- header -->
+          <div class="px-3.5 py-2.5 cursor-pointer" @click="selectedRoute=r.id; selectedOrder=null">
+            <div class="flex items-center gap-2">
+              <span class="font-display font-bold text-[15px] tracking-tight" x-text="r.name"></span>
+              <span class="text-[10px] font-mono text-gray-500" x-text="r.driver"></span>
+              <span class="text-[9px] font-bold px-1.5 py-0.5 rounded bg-amber-50 text-[var(--amber)] uppercase" x-show="!r.confirmed">tentative</span>
+              <span class="text-[9px] font-bold px-1.5 py-0.5 rounded bg-green-50 text-[var(--green)] uppercase" x-show="r.confirmed">confirmed</span>
+              <div class="ml-auto flex items-center gap-1.5">
+                <button @click.stop="openRouteConfig(r)" class="text-[10px] border border-gray-200 rounded px-1.5 py-0.5 hover:bg-gray-50">⚙ config</button>
+                <button @click.stop="saveTemplate(r)" class="text-[10px] border border-gray-200 rounded px-1.5 py-0.5 hover:bg-gray-50">save tmpl</button>
+                <button @click.stop="loadSheet(r)" class="text-[10px] border border-gray-200 rounded px-1.5 py-0.5 hover:bg-gray-50">load sheet</button>
+                <button @click.stop="openStatusModal(r.id)" class="text-[10px] border border-gray-200 rounded px-1.5 py-0.5 hover:bg-gray-50" x-show="routeProgress(r.id).total>0 && (routeProgress(r.id).picked+routeProgress(r.id).confirmed+routeProgress(r.id).assigned)>0">📟 status</button>
+                <button @click.stop="deleteRoute(r)" class="text-[10px] text-[var(--red)] hover:underline">delete</button>
+              </div>
+            </div>
+            <div class="flex items-center gap-2 mt-1.5 text-[10px] flex-wrap">
+              <span class="px-1.5 py-0.5 rounded bg-gray-100 font-semibold" x-text="r.truckType+' · '+truckCap(r.truckType)+' pal'"></span>
+              <span class="px-1.5 py-0.5 rounded bg-gray-100 font-semibold" x-text="r.loading+' load'"></span>
+              <span class="px-1.5 py-0.5 rounded font-semibold" :class="r.packing==='mixed'?'bg-purple-50 text-[#8b5cf6]':'bg-blue-50 text-[var(--blue)]'" x-text="r.packing"></span>
+            </div>
+            <!-- capacity -->
+            <div class="mt-2">
+              <div class="flex items-center justify-between text-[10px] mb-0.5">
+                <span class="font-semibold" :class="overCap(r)?'text-[var(--red)]':'text-gray-500'" x-text="palletCount(r)+' / '+truckCap(r.truckType)+' pallets'"></span>
+                <span x-show="overCap(r)" class="text-[var(--red)] font-bold">OVER CAPACITY</span>
+              </div>
+              <div class="h-2.5 rounded-full bg-gray-100 overflow-hidden" :class="overCap(r)?'pulse-warn ring-1 ring-[var(--red)]':''">
+                <div class="h-full rounded-full transition-all" :style="'width:'+capPct(r)+'%;background:'+(overCap(r)?'var(--red)':r.color)"></div>
+              </div>
+              <!-- dual readout -->
+              <div class="grid grid-cols-2 gap-1.5 mt-1.5">
+                <div class="text-[9px] bg-blue-50 rounded px-1.5 py-1">
+                  <span class="font-bold text-[var(--blue)]">Per-order:</span> <span x-text="palletCountMode(r,'per-order')+' pal'"></span>
+                  · <span x-text="(truckCap(r.truckType)-palletCountMode(r,'per-order'))+' left'"></span>
+                </div>
+                <div class="text-[9px] bg-purple-50 rounded px-1.5 py-1">
+                  <span class="font-bold text-[#8b5cf6]">Mixed:</span> <span x-text="palletCountMode(r,'mixed')+' pal'"></span>
+                  · <span x-text="(truckCap(r.truckType)-palletCountMode(r,'mixed'))+' left'"></span>
+                </div>
+              </div>
+              <div x-show="overCap(r)" class="text-[10px] text-[var(--red)] mt-1">⚠ Exceeds truck. Try a larger truck via ⚙ config.</div>
+              <!-- picking progress -->
+              <template x-if="routeProgress(r.id).total>0">
+                <div class="mt-2">
+                  <div class="flex items-center justify-between text-[10px] mb-0.5">
+                    <span class="font-semibold text-gray-500">Picking progress</span>
+                    <span class="font-mono text-gray-500" x-text="routeProgress(r.id).confirmed+' confirmed · '+routeProgress(r.id).picked+' picked · '+routeProgress(r.id).assigned+' assigned / '+routeProgress(r.id).total"></span>
+                  </div>
+                  <div class="h-2 rounded-full bg-gray-100 overflow-hidden flex">
+                    <div class="h-full bg-[var(--green)]" :style="'width:'+(routeProgress(r.id).confirmed/routeProgress(r.id).total*100)+'%'"></div>
+                    <div class="h-full bg-[#8b5cf6]" :style="'width:'+(routeProgress(r.id).picked/routeProgress(r.id).total*100)+'%'"></div>
+                    <div class="h-full bg-[var(--blue)]" :style="'width:'+(routeProgress(r.id).assigned/routeProgress(r.id).total*100)+'%'"></div>
+                  </div>
+                </div>
+              </template>
+            </div>
+          </div>
+          <!-- stops head -->
+          <div class="px-3.5 pb-1 flex items-center justify-between">
+            <span class="text-[10px] uppercase tracking-wide font-bold text-gray-400" x-text="'Stops ('+r.stops.length+')'"></span>
+            <div class="flex items-center gap-2">
+              <button x-show="r.packing==='per-order' && r.stops.length>1" @click="togglePackMode(r.id)" class="text-[10px] font-semibold hover:underline"
+                :class="packMode===r.id?'text-[var(--red)]':'text-[var(--blue)]'" x-text="packMode===r.id?'✕ cancel select':'☑ select to pack'"></button>
+              <button x-show="r.stops.length>1" @click="autoSort(r)" class="text-[10px] text-[var(--blue)] font-semibold hover:underline">↕ Auto-sort by proximity</button>
+              <button @click="selectedRoute=r.id; assignMode=true; rearrange=false" class="text-[10px] font-semibold bg-ink text-white px-2 py-1 rounded">📟 Assign pallets</button>
+            </div>
+          </div>
+          <!-- in-route pack-together action bar -->
+          <div x-show="packMode===r.id && routeSel(r.id).length>=1" class="mx-3.5 mb-2 px-3 py-2 bg-ink text-white text-[11px] rounded-lg flex items-center gap-2">
+            <span x-text="routeSel(r.id).length+' selected'"></span>
+            <button @click="packSelected(r)" :disabled="routeSel(r.id).length<2"
+              class="ml-auto px-2.5 py-1 rounded font-semibold" :class="routeSel(r.id).length<2?'bg-white/20 text-gray-400':'bg-[var(--blue)]'">Pack together →</button>
+            <button @click="clearRouteSel(r.id)" class="text-gray-300 underline">clear</button>
+          </div>
+          <!-- existing pack groups -->
+          <div x-show="(r.packGroups||[]).length>0" class="px-3.5 pb-1 space-y-1">
+            <template x-for="(g,gi) in (r.packGroups||[])" :key="gi">
+              <div class="flex items-center gap-1.5 text-[10px] bg-blue-50 text-[var(--blue)] rounded px-2 py-1">
+                <span class="font-bold">⊞ Packed together:</span>
+                <span class="font-mono truncate flex-1" x-text="g.join(' + ')"></span>
+                <button @click="unpackGroup(r,gi)" class="hover:underline font-semibold">unpack</button>
+              </div>
+            </template>
+          </div>
+          <!-- dropzone / stops -->
+          <div class="dz px-3.5 pb-3 space-y-1.5 min-h-[44px]" :data-routeid="r.id"
+            @dragover.prevent="$event.currentTarget.classList.add('drag-over')"
+            @dragleave="$event.currentTarget.classList.remove('drag-over')"
+            @drop.prevent="$event.currentTarget.classList.remove('drag-over'); dropOnRoute(r, dragId, dragFuture)"
+            x-ref="dz">
+            <template x-if="r.stops.length===0">
+              <div class="text-[11px] text-gray-400 italic border border-dashed border-gray-200 rounded-md py-2 text-center">Drop orders here</div>
+            </template>
+            <template x-for="(id,idx) in r.stops" :key="id">
+              <div class="stop-row flex items-center gap-2 bg-gray-50 rounded-md px-2 py-1.5"
+                :class="(selectedOrder===id?'ring-2 ring-[var(--blue)] ':'')+(packMode===r.id?'':'cursor-grab')+(routeSel(r.id).includes(id)?' bg-blue-50':'')"
+                :data-stopid="id"
+                @click="packMode===r.id ? toggleRouteSel(r.id,id) : (selectedRoute=r.id, selectedOrder=(r.packing==='per-order'?id:null))">
+                <input x-show="packMode===r.id" type="checkbox" :checked="routeSel(r.id).includes(id)" @click.stop="toggleRouteSel(r.id,id)" class="shrink-0">
+                <span class="w-5 h-5 rounded-full text-white text-[10px] font-bold flex items-center justify-center shrink-0" :style="'background:'+r.color" x-text="idx+1"></span>
+                <div class="min-w-0 flex-1">
+                  <div class="text-[12px] font-semibold leading-tight truncate flex items-center gap-1">
+                    <span x-text="ord(id).customer"></span>
+                    <span x-show="inPackGroup(r,id)" class="text-[8px] bg-blue-100 text-[var(--blue)] rounded px-1 font-bold">⊞</span>
+                  </div>
+                  <div class="text-[10px] text-gray-400 font-mono" x-text="id+' · '+ord(id).zip+' · '+orderFrac(ord(id)).toFixed(1)+' pal'"></div>
+                </div>
+                <button x-show="r.packing==='mixed' && packMode!==r.id" @click.stop="toggleSeparate(r,id)"
+                  class="text-[9px] font-semibold px-1.5 py-0.5 rounded border"
+                  :class="(r.separated||[]).includes(id)?'bg-purple-50 text-[#8b5cf6] border-purple-200':'border-gray-200 hover:bg-white'"
+                  x-text="(r.separated||[]).includes(id)?'separated':'pack sep'"></button>
+                <button x-show="packMode!==r.id" @click.stop="removeStop(r,id)" class="text-gray-300 hover:text-[var(--red)] text-xs px-1">✕</button>
+              </div>
+            </template>
+          </div>
+          <!-- bay loading note -->
+          <div x-show="r.packing==='per-order' && r.loading==='Bay' && r.stops.length>1" class="px-3.5 pb-3 -mt-1">
+            <div class="text-[10px] text-gray-500 bg-amber-50 border border-amber-100 rounded px-2 py-1">
+              ↻ <b>Bay + per-order = first-in-last-out.</b> Load deepest first:
+              <span class="font-mono" x-text="[...r.stops].reverse().join(' → ')"></span>
+            </div>
+          </div>
+          <div x-show="r.scheduled" class="px-3.5 pb-3 -mt-1">
+            <div class="text-[10px] text-[var(--blue)] bg-blue-50 rounded px-2 py-1">⏱ Picking scheduled for <span x-text="r.scheduled"></span></div>
+          </div>
+        </div>
+      </template>
+    </div>
+  </section>
+
+  <!-- RIGHT: INSPECTOR -->
+  <section class="bg-white border-l border-gray-200 flex flex-col min-h-0">
+    <div class="px-4 py-2.5 border-b border-gray-200 flex items-center justify-between gap-2">
+      <h2 class="font-display font-bold text-sm tracking-tight">Pallet Inspector</h2>
+      <div class="flex items-center gap-1.5">
+        <button x-show="selectedRoute" @click="assignMode=!assignMode; if(assignMode)rearrange=false" class="text-[10px] font-semibold border px-2 py-1 rounded"
+          :class="assignMode?'bg-ink text-white border-ink':'border-gray-300 hover:bg-gray-50'"
+          x-text="'Assign: '+(assignMode?'On':'Off')"></button>
+        <button x-show="selectedRoute" @click="rearrange=!rearrange; if(rearrange)assignMode=false" class="text-[10px] font-semibold border px-2 py-1 rounded"
+          :class="rearrange?'bg-[var(--blue)] text-white border-[var(--blue)]':'border-gray-300 hover:bg-gray-50'"
+          x-text="'Rearrange: '+(rearrange?'On':'Off')"></button>
+      </div>
+    </div>
+    <div class="flex-1 overflow-y-auto p-3.5 min-h-0" x-html="inspectorHtml()"></div>
+  </section>
+</main>
+
+<!-- ===================== SCREEN: CONFIGURATION ===================== -->
+<main x-show="screen==='config'" class="h-[calc(100vh-53px)] flex flex-col">
+  <div class="bg-white border-b border-gray-200 px-5 flex items-center gap-1">
+    <template x-for="t in cfgTabs" :key="t">
+      <button @click="cfgTab=t; onCfgTab()" class="px-3.5 py-3 text-xs font-semibold border-b-2 transition"
+        :class="cfgTab===t?'border-[var(--blue)] text-[var(--blue)]':'border-transparent text-gray-500 hover:text-ink'" x-text="t"></button>
+    </template>
+  </div>
+  <div class="flex-1 overflow-y-auto p-5 min-h-0" x-html="cfgHtml()"></div>
+</main>
+
+<!-- ===================== SCREEN: MANAGER HANDHELD ===================== -->
+<main x-show="screen==='handheld'" class="min-h-[calc(100vh-53px)] flex items-center justify-center py-6">
+  <div class="tablet">
+    <div class="tablet-cam"></div>
+    <div class="tablet-screen flex flex-col">
+      <div class="bg-ink text-white px-4 py-3 flex items-center gap-2">
+        <div class="font-display font-bold text-base">Manager Handheld</div>
+        <span class="text-[10px] text-gray-400 ml-auto" x-text="planDate"></span>
+      </div>
+      <div class="flex-1 overflow-y-auto" x-html="handheldHtml()"></div>
+    </div>
+  </div>
+</main>
+
+<!-- ===================== SCREEN: PICKER DEVICE ===================== -->
+<main x-show="screen==='picker'" class="min-h-[calc(100vh-53px)] flex items-center justify-center py-6">
+  <div class="tablet">
+    <div class="tablet-cam"></div>
+    <div class="tablet-screen flex flex-col">
+      <div class="text-white px-5 py-4 flex items-center gap-3" style="background:#0f1419">
+        <div>
+          <div class="font-display font-extrabold text-xl" x-text="pickerDeviceName()"></div>
+          <div class="text-[11px] text-gray-400">picker terminal</div>
+        </div>
+        <select x-model="activeDevice" class="ml-auto bg-white/10 text-white text-sm rounded-lg px-3 py-2 border border-white/15">
+          <template x-for="d in devices.filter(d=>d.status==='Active')" :key="d.num">
+            <option :value="d.num" x-text="d.name"></option>
+          </template>
+        </select>
+      </div>
+      <div class="flex-1 overflow-y-auto" x-html="pickerHtml()"></div>
+    </div>
+  </div>
+</main>
+
+<!-- ===================== MODAL + TOAST ===================== -->
+<template x-if="modal.open">
+  <div class="fixed inset-0 modal-bg z-[2000] flex items-center justify-center p-4 print:hidden" @click.self="closeModal()">
+    <div class="bg-white rounded-2xl shadow-2xl w-full fade-in" :class="modal.wide?'max-w-2xl':'max-w-md'" style="max-height:90vh;overflow-y:auto">
+      <div class="p-5" x-html="modal.html"></div>
+    </div>
+  </div>
+</template>
+<div class="fixed bottom-5 left-1/2 -translate-x-1/2 z-[3000] print:hidden" x-show="toast.show" x-transition>
+  <div class="text-white text-sm px-4 py-2.5 rounded-lg shadow-xl font-medium"
+    :class="{'bg-ink':toast.kind==='ok','bg-[var(--amber)]':toast.kind==='warn','bg-[var(--red)]':toast.kind==='err'}" x-text="toast.msg"></div>
+</div>
+<div id="printArea" class="hidden"></div>
+
+<!-- Alpine + data loaded last -->
+<script>
+/* ================= MOCK DATA ================= */
+const CAT_COLOR = {Soda:'#ef4444',Water:'#0ea5e9',Juice:'#f59e0b',Energy:'#8b5cf6',Beer:'#a16207'};
+let PRODUCTS = [
+  {code:"10042",name:"Coca-Cola 12oz",category:"Soda",size:"12oz",flavor:"Cola",casesPerPallet:50,stabilityRank:22,deposit:120,stock:240},
+  {code:"10043",name:"Coca-Cola 2L",category:"Soda",size:"2L",flavor:"Cola",casesPerPallet:30,stabilityRank:9,deposit:90,stock:150},
+  {code:"10051",name:"Sprite 12oz",category:"Soda",size:"12oz",flavor:"Lemon-Lime",casesPerPallet:50,stabilityRank:21,deposit:120,stock:180},
+  {code:"10052",name:"Fanta Orange 12oz",category:"Soda",size:"12oz",flavor:"Orange",casesPerPallet:50,stabilityRank:20,deposit:120,stock:160},
+  {code:"10060",name:"Dr Pepper 2L",category:"Soda",size:"2L",flavor:"Cola",casesPerPallet:30,stabilityRank:8,deposit:90,stock:120},
+  {code:"10061",name:"Root Beer 12oz",category:"Soda",size:"12oz",flavor:"Root Beer",casesPerPallet:48,stabilityRank:19,deposit:115,stock:96},
+  {code:"20010",name:"Spring Water 16oz",category:"Water",size:"16oz",flavor:"Plain",casesPerPallet:60,stabilityRank:26,deposit:60,stock:500},
+  {code:"20011",name:"Spring Water 1L",category:"Water",size:"1L",flavor:"Plain",casesPerPallet:40,stabilityRank:18,deposit:80,stock:300},
+  {code:"20020",name:"Sparkling Water Lime",category:"Water",size:"12oz",flavor:"Lime",casesPerPallet:55,stabilityRank:24,deposit:70,stock:220},
+  {code:"20021",name:"Sparkling Water Plain",category:"Water",size:"12oz",flavor:"Plain",casesPerPallet:55,stabilityRank:25,deposit:70,stock:240},
+  {code:"20030",name:"Mineral Water 1.5L",category:"Water",size:"1.5L",flavor:"Plain",casesPerPallet:36,stabilityRank:17,deposit:85,stock:140},
+  {code:"30015",name:"Orange Juice 1L",category:"Juice",size:"1L",flavor:"Orange",casesPerPallet:32,stabilityRank:7,deposit:100,stock:90},
+  {code:"30016",name:"Apple Juice 1L",category:"Juice",size:"1L",flavor:"Apple",casesPerPallet:32,stabilityRank:6,deposit:100,stock:110},
+  {code:"30020",name:"Cranberry Juice 1L",category:"Juice",size:"1L",flavor:"Cranberry",casesPerPallet:32,stabilityRank:5,deposit:100,stock:70},
+  {code:"30025",name:"OJ 12oz",category:"Juice",size:"12oz",flavor:"Orange",casesPerPallet:48,stabilityRank:16,deposit:90,stock:130},
+  {code:"30026",name:"Lemonade 12oz",category:"Juice",size:"12oz",flavor:"Lemon",casesPerPallet:48,stabilityRank:15,deposit:90,stock:120},
+  {code:"40005",name:"Red Bull 8oz",category:"Energy",size:"8oz",flavor:"Original",casesPerPallet:72,stabilityRank:28,deposit:50,stock:360},
+  {code:"40006",name:"Red Bull Sugarfree",category:"Energy",size:"8oz",flavor:"Original",casesPerPallet:72,stabilityRank:27,deposit:50,stock:300},
+  {code:"40010",name:"Monster 16oz",category:"Energy",size:"16oz",flavor:"Original",casesPerPallet:52,stabilityRank:23,deposit:65,stock:200},
+  {code:"40011",name:"Monster Ultra",category:"Energy",size:"16oz",flavor:"Citrus",casesPerPallet:52,stabilityRank:14,deposit:65,stock:180},
+  {code:"40020",name:"Rockstar 16oz",category:"Energy",size:"16oz",flavor:"Original",casesPerPallet:52,stabilityRank:13,deposit:65,stock:150},
+  {code:"50008",name:"Lager 12oz",category:"Beer",size:"12oz",flavor:"Lager",casesPerPallet:44,stabilityRank:12,deposit:200,stock:160},
+  {code:"50009",name:"IPA 12oz",category:"Beer",size:"12oz",flavor:"IPA",casesPerPallet:44,stabilityRank:11,deposit:200,stock:140},
+  {code:"50015",name:"Pilsner 12oz",category:"Beer",size:"12oz",flavor:"Pilsner",casesPerPallet:44,stabilityRank:10,deposit:200,stock:120},
+  {code:"50020",name:"Stout 16oz",category:"Beer",size:"16oz",flavor:"Stout",casesPerPallet:40,stabilityRank:4,deposit:220,stock:80},
+  {code:"50021",name:"Amber Ale 16oz",category:"Beer",size:"16oz",flavor:"Amber",casesPerPallet:40,stabilityRank:3,deposit:220,stock:75},
+  {code:"50030",name:"Wheat 1L",category:"Beer",size:"1L",flavor:"Wheat",casesPerPallet:28,stabilityRank:2,deposit:240,stock:60},
+  {code:"50031",name:"Craft Bomber 1L",category:"Beer",size:"1L",flavor:"Double IPA",casesPerPallet:24,stabilityRank:1,deposit:260,stock:48},
+];
+let CATALOG = {
+  Soda:{sizes:["12oz","2L"],flavors:["Cola","Lemon-Lime","Orange","Root Beer"]},
+  Water:{sizes:["16oz","1L","1.5L","12oz"],flavors:["Plain","Lime"]},
+  Juice:{sizes:["1L","12oz"],flavors:["Orange","Apple","Cranberry","Lemon"]},
+  Energy:{sizes:["8oz","16oz"],flavors:["Original","Citrus"]},
+  Beer:{sizes:["12oz","16oz","1L"],flavors:["Lager","IPA","Pilsner","Stout","Amber","Wheat","Double IPA"]},
+};
+const ZIP_COORD = {"22701":[38.473,-77.996],"22960":[38.221,-78.260],"24015":[37.262,-79.974],"24551":[37.357,-79.179]};
+function _coord(o){const b=ZIP_COORD[o.zip]||[38,-78.5];return [b[0]+(Math.random()-.5)*.05,b[1]+(Math.random()-.5)*.05];}
+const L_=(code,cases)=>({code,cases});
+let ORDERS=[
+  {id:"SO-2041",customer:"Hilltop Grocers",area:"North",zip:"22701",kind:"regular",received:"08:02",lines:[L_("10042",40),L_("20010",24),L_("40005",12)]},
+  {id:"SO-2042",customer:"Riverside Diner",area:"East",zip:"22960",kind:"dated",date:"2026-05-28",received:"08:09",lines:[L_("10043",18),L_("30015",10),L_("50008",16)]},
+  {id:"SO-2043",customer:"Quick Mart 7th",area:"North",zip:"22701",kind:"regular",received:"08:15",lines:[L_("40005",30),L_("40006",18),L_("20020",20)]},
+  {id:"SO-2044",customer:"Sunset Cafe",area:"West",zip:"24015",kind:"dated",date:"2026-05-30",received:"08:21",lines:[L_("30016",14),L_("30020",8),L_("20011",16)]},
+  {id:"SO-2045",customer:"Bayview Bottle Shop",area:"East",zip:"22960",kind:"draft",received:"08:24",lines:[L_("50009",24),L_("50015",20),L_("50020",10)]},
+  {id:"SO-2046",customer:"Green Valley Market",area:"South",zip:"24551",kind:"regular",received:"08:30",lines:[L_("20010",36),L_("20011",20),L_("10051",30)]},
+  {id:"SO-2047",customer:"Downtown Deli",area:"North",zip:"22701",kind:"regular",received:"08:37",lines:[L_("30025",18),L_("10052",22),L_("40010",14)]},
+  {id:"SO-2048",customer:"Lakeside Restaurant",area:"West",zip:"24015",kind:"dated",date:"2026-06-02",received:"08:41",lines:[L_("50021",12),L_("50030",8),L_("10060",10)]},
+  {id:"SO-2049",customer:"Corner Store 22",area:"South",zip:"24551",kind:"regular",received:"08:46",lines:[L_("10042",26),L_("10051",24),L_("20030",18)]},
+  {id:"SO-2050",customer:"Harbor Pub",area:"East",zip:"22960",kind:"draft",received:"08:52",lines:[L_("50008",30),L_("50031",6),L_("50020",14)]},
+  {id:"SO-2051",customer:"Maple Grocery",area:"North",zip:"22701",kind:"regular",received:"08:58",lines:[L_("40011",16),L_("40020",14),L_("30026",18),L_("20020",12)]},
+  {id:"SO-2052",customer:"Pinewood Cafe",area:"West",zip:"24015",kind:"regular",received:"09:03",lines:[L_("30015",20),L_("30016",16),L_("10043",12)]},
+  {id:"SO-2053",customer:"Eastgate Foods",area:"East",zip:"22960",kind:"regular",received:"09:10",lines:[L_("10042",50),L_("20010",40),L_("10051",30),L_("40005",20)]},
+  {id:"SO-2054",customer:"Westend Spirits",area:"West",zip:"24015",kind:"regular",received:"09:14",lines:[L_("50015",28),L_("50009",22),L_("50021",10)]},
+];
+ORDERS.forEach(o=>o.coord=_coord(o));
+// seeded back orders (locked until stock returns) — appended at END of the order list
+ORDERS.push({id:"BO-000",customer:"(back order)",area:"—",zip:"22701",kind:"backorder",received:"pending stock",lines:[L_("50031",6)],coord:_coord({zip:"22701"})});
+ORDERS.push({id:"BO-001",customer:"(back order)",area:"—",zip:"24015",kind:"backorder",received:"pending stock",lines:[L_("30020",10)],coord:_coord({zip:"24015"})});
+const ROUTE_COLORS=["#1a73e8","#16a34a","#d97706","#8b5cf6","#dc2626","#0891b2"];
+</script>
+
+<script>
+/* ================= APP (Alpine component) ================= */
+function app(){
+ return {
+  screens:[
+    {id:'dashboard',label:'Dashboard',icon:'🗂'},
+    {id:'config',label:'Configuration',icon:'⚙'},
+    {id:'handheld',label:'Manager Handheld',icon:'📱'},
+    {id:'picker',label:'Picker Device',icon:'📟'},
+  ],
+  screen:'dashboard',
+  planDate:'2026-05-28',
+  // queue
+  filter:'All', sort:'time', selectedQ:[], assignMenu:false, selectedStops:[], packMode:null, routeSelections:{},
+  dragId:null, dragFuture:false,
+  // routes
+  routes:[], routeSeq:1, selectedRoute:null, selectedOrder:null, rearrange:false,
+  // config data
+  trucks:[{name:'Small',capacity:6},{name:'Medium',capacity:10},{name:'Large',capacity:16}],
+  drivers:['J. Alvarez','M. Chen','R. Okafor'],
+  templates:[
+    {name:'North AM Run',truckType:'Medium',loading:'Bay',packing:'per-order',driver:'J. Alvarez'},
+    {name:'East Mixed Loop',truckType:'Large',loading:'Side',packing:'mixed',driver:'M. Chen'},
+  ],
+  devices:[
+    {num:1,name:'Device 1 (Front)',status:'Active',lastSeen:'just now',location:'in warehouse',wifi:'WH-NET-5G',connected:true,gpsNear:true},
+    {num:2,name:'Device 2 (Back)',status:'Active',lastSeen:'2m ago',location:'in warehouse',wifi:'WH-NET-5G',connected:true,gpsNear:true},
+  ],
+  deviceSeq:3,
+  warehouse:{lat:38.30,lng:-78.10,wifi:'WH-NET-5G'},
+  catalogPickOrder:[], // codes
+  // picking — pallet-centric assignment model
+  // palletAssign: { palletId -> {device, status:'assigned'|'picking'|'picked'|'confirmed', results:[] } }
+  palletAssign:{}, activeDevice:1, picker:null, listReview:{},
+  palletSel:[], assignMode:false,    // pallet IDs selected by manager for assignment
+  assignPalletMenu:false,  // dashboard assign menu open
+  hhView:'lists',          // manager handheld: 'lists' (assignable) or status
+  backSeq:2,
+  cfgTabs:['Catalog','Stability Ranking','Catalog Pick Order','Truck Types','Drivers','Devices','Route Templates'],
+  cfgTab:'Catalog',
+  modal:{open:false,html:'',wide:false},
+  toast:{show:false,msg:'',kind:'ok'},
+  _bump:0, // force recompute on demand
+
+  /* ---------- init ---------- */
+  init(){
+    // seed catalog pick order from current product order
+    this.catalogPickOrder = PRODUCTS.map(p=>p.code);
+    // seed one route
+    this.routes.push({id:'R'+(this.routeSeq++),name:'North AM Run',truckType:'Medium',loading:'Bay',packing:'per-order',driver:'J. Alvarez',color:ROUTE_COLORS[0],stops:['SO-2041','SO-2043','SO-2047'],packGroups:[],separated:[],backToMixed:{},confirmed:false,scheduled:null});
+    this.selectedRoute=this.routes[0].id;
+    this.$nextTick(()=>{ this.wireRefClicks(); this.wireStopSortables(); });
+    this.$watch('routes',()=>this.$nextTick(()=>{this.wireStopSortables();this.wireRefClicks();}),{deep:true});
+    this.$watch('screen',()=>this.$nextTick(()=>this.wireRefClicks()));
+    this.$watch('cfgTab',()=>this.$nextTick(()=>{this.wireRefClicks();this.wireCfgSortables();}));
+    setTimeout(()=>this.flash('Tip: drag orders into routes · Alt-click any element to reference it'),700);
+  },
+  onScreen(){
+    this.$nextTick(()=>{ this.wireRefClicks(); });
+  },
+
+  /* ---------- helpers ---------- */
+  PM(){return Object.fromEntries(PRODUCTS.map(p=>[p.code,p]));},
+  ord(id){return ORDERS.find(o=>o.id===id);},
+  orderCases(o){return o.lines.reduce((s,l)=>s+l.cases,0);},
+  orderFrac(o){const pm=this.PM();return o.lines.reduce((s,l)=>s+l.cases/pm[l.code].casesPerPallet,0);},
+  orderCats(o){return [...new Set(o.lines.map(l=>this.PM()[l.code].category))];},
+  truckCap(name){const t=this.trucks.find(t=>t.name===name);return t?t.capacity:0;},
+  assignedIds(){return new Set(this.routes.flatMap(r=>r.stops));},
+  isFuture(o){return o.kind==='dated' && o.date>this.planDate;},
+  flash(msg,kind='ok'){this.toast={show:true,msg,kind};clearTimeout(this._t);this._t=setTimeout(()=>this.toast.show=false,2600);},
+  modalOpen(html,wide=false){this.modal={open:true,html,wide};this.$nextTick(()=>this.wireRefClicks());},
+  closeModal(){this.modal.open=false;},
+
+  /* ---------- queue ---------- */
+  filterChips(){return ['All','Regular','Dated','Unpaid',...new Set(ORDERS.map(o=>o.area))];},
+  openOrders(){const a=this.assignedIds();return ORDERS.filter(o=>!a.has(o.id));},
+  passFilter(o){const f=this.filter;if(f==='All')return true;if(f==='Regular')return o.kind==='regular';if(f==='Dated')return o.kind==='dated';if(f==='Unpaid')return o.kind==='draft';return o.area===f;},
+  sortedQueue(){
+    let l=this.openOrders().filter(o=>this.passFilter(o));
+    const s=this.sort;
+    if(s==='time')l.sort((a,b)=>a.received<b.received?-1:1);
+    if(s==='area')l.sort((a,b)=>a.area<b.area?-1:(a.area>b.area?1:(a.received<b.received?-1:1)));
+    if(s==='proximity')l.sort((a,b)=>a.zip<b.zip?-1:(a.zip>b.zip?1:0));
+    // back orders always sink to the bottom of the list
+    l.sort((a,b)=>(a.kind==='backorder'?1:0)-(b.kind==='backorder'?1:0));
+    return l;
+  },
+  kindBadge(o){
+    if(o.kind==='regular')return `<span class="text-[9px] font-bold px-1.5 py-0.5 rounded bg-gray-100 text-gray-600 uppercase tracking-wide">Regular</span>`;
+    if(o.kind==='dated')return `<span class="text-[9px] font-bold px-1.5 py-0.5 rounded bg-blue-50 text-[var(--blue)] uppercase tracking-wide">Dated · ${o.date.slice(5)}</span>`;
+    if(o.kind==='backorder')return `<span class="text-[9px] font-bold px-1.5 py-0.5 rounded bg-purple-50 text-[#8b5cf6] uppercase tracking-wide">🔒 Back order</span>`;
+    return `<span class="text-[9px] font-bold px-1.5 py-0.5 rounded bg-amber-50 text-[var(--amber)] uppercase tracking-wide">🔒 Unpaid</span>`;
+  },
+  isLocked(o){return o.kind==='draft'||o.kind==='backorder';},
+  toggleSelect(id){const i=this.selectedQ.indexOf(id);if(i>=0)this.selectedQ.splice(i,1);else this.selectedQ.push(id);},
+  dragStart(e,o){if(this.isLocked(o)){e.preventDefault();return;}this.dragId=o.id;this.dragFuture=this.isFuture(o);e.dataTransfer.setData('text/plain',o.id);},
+  assignSelectedTo(rid){
+    const r=this.routes.find(x=>x.id===rid);if(!r)return;
+    this.invalidateManual(r);
+    const ids=[...this.selectedQ];let added=0,skipped=0,future=[];
+    ids.forEach(id=>{
+      const o=this.ord(id);
+      if(this.isLocked(o)){skipped++;return;}
+      if(this.isFuture(o)){future.push(id);return;}
+      if(!r.stops.includes(id)){r.stops.push(id);added++;}
+    });
+    r.confirmed=false;this.selectedRoute=rid;this.selectedQ=[];this.assignMenu=false;
+    let msg=added+' assigned to '+r.name;
+    if(skipped)msg+=' · '+skipped+' skipped (locked)';
+    if(future.length){
+      this.confirm('Deliver future-dated early?',future.length+' selected order(s) are dated later than the planning day. Add them to <b>'+r.name+'</b> anyway?','Add them',()=>{future.forEach(id=>{if(!r.stops.includes(id))r.stops.push(id);});this._bump++;this.flash('Added '+future.length+' future-dated order(s).');});
+    }
+    this.flash(msg);
+  },
+  // in-route pack-together
+  togglePackMode(rid){this.packMode=this.packMode===rid?null:rid;this.$nextTick(()=>this.wireStopSortables());},
+  routeSel(rid){return this.routeSelections[rid]||[];},
+  toggleRouteSel(rid,id){const cur=this.routeSelections[rid]?[...this.routeSelections[rid]]:[];const i=cur.indexOf(id);if(i>=0)cur.splice(i,1);else cur.push(id);this.routeSelections={...this.routeSelections,[rid]:cur};},
+  clearRouteSel(rid){this.routeSelections={...this.routeSelections,[rid]:[]};},
+  inPackGroup(r,id){return (r.packGroups||[]).some(g=>g.includes(id));},
+  packSelected(r){
+    const ids=this.routeSel(r.id);
+    if(ids.length<2){this.flash('Select at least 2 stops to pack together.','warn');return;}
+    if(r.packing!=='per-order'){this.flash('Pack-together applies to per-order routes (mixed already combines everything).','warn');return;}
+    this.invalidateManual(r);
+    r.packGroups=r.packGroups||[];
+    // remove these ids from any existing group, then add the new group
+    r.packGroups=r.packGroups.map(g=>g.filter(x=>!ids.includes(x))).filter(g=>g.length>=2);
+    r.packGroups.push([...ids]);
+    this.clearRouteSel(r.id);this.packMode=null;this._bump++;
+    this.$nextTick(()=>this.wireStopSortables());
+    this.flash(ids.length+' stops packed together — they now share pallets.');
+  },
+  unpackGroup(r,gi){this.invalidateManual(r);r.packGroups.splice(gi,1);this._bump++;this.flash('Unpacked — orders pack individually again.');},
+
+  /* ---------- routes ---------- */
+  dropOnRoute(r,id,future){
+    if(!id)return;const o=this.ord(id);
+    if(this.isLocked(o)){this.flash('Locked order — cannot route.','err');return;}
+    const add=()=>{this.invalidateManual(r);if(!r.stops.includes(id)){r.stops.push(id);this.selectedRoute=r.id;r.confirmed=false;}};
+    if(future){
+      this.confirm('Deliver early?',`Order <b>${o.id}</b> is dated for <b>${o.date}</b>, later than the planning day.<br><br>Deliver now?`,'Deliver now',add);
+    } else add();
+    this.dragId=null;
+  },
+  removeStop(r,id){this.invalidateManual(r);r.stops=r.stops.filter(x=>x!==id);if(r.packGroups)r.packGroups=r.packGroups.map(g=>g.filter(x=>x!==id)).filter(g=>g.length>=2);if(r.separated)r.separated=r.separated.filter(x=>x!==id);if(this.routeSelections[r.id])this.routeSelections={...this.routeSelections,[r.id]:this.routeSelections[r.id].filter(x=>x!==id)};},
+  toggleSeparate(r,id){this.invalidateManual(r);r.separated=r.separated||[];const i=r.separated.indexOf(id);if(i>=0)r.separated.splice(i,1);else r.separated.push(id);},
+  autoSort(r){r.stops.sort((a,b)=>{const za=this.ord(a).zip,zb=this.ord(b).zip;return za<zb?-1:za>zb?1:0;});this.flash('Stops grouped by zip (proximity mock).');},
+  deleteRoute(r){this.routes=this.routes.filter(x=>x!==r);if(this.selectedRoute===r.id)this.selectedRoute=null;},
+  selectGroupPallets(routeId,gi){ // toggle all selectable pallets of one group
+    const ids=this.allPallets().filter(p=>p.id.startsWith(routeId+':'+gi+':')&&this.assignStatus(p.id)!=='picked'&&this.assignStatus(p.id)!=='confirmed').map(p=>p.id);
+    const allSel=ids.length>0&&ids.every(id=>this.palletSel.includes(id));
+    if(allSel)this.palletSel=this.palletSel.filter(id=>!ids.includes(id));
+    else ids.forEach(id=>{if(!this.palletSel.includes(id))this.palletSel.push(id);});
+  },
+  assignSelToDevice(dev){
+    if(this.palletSel.length===0){this.flash('Tick one or more pallets first.','warn');return;}
+    let n=0;this.palletSel.forEach(id=>{const cur=this.palletAssign[id];if(cur&&(cur.status==='picked'||cur.status==='confirmed'))return;this.palletAssign[id]={device:dev,status:'assigned',results:null};n++;});
+    this.palletAssign={...this.palletAssign};this.clearPalletSel();this._bump++;
+    const d=this.devices.find(x=>x.num===dev);
+    this.flash(n+' pallet(s) assigned to '+(d?d.name:('Device '+dev))+'.');
+  },
+  saveTemplate(r){this.templates.push({name:r.name,truckType:r.truckType,loading:r.loading,packing:r.packing,driver:r.driver});this.flash(`Saved "${r.name}" as template (settings only).`);},
+
+  /* ---------- pallet algorithm ---------- */
+  computePallets(lines){
+    const pm=this.PM();
+    // merge duplicate codes
+    const merged={};lines.forEach(l=>{merged[l.code]=(merged[l.code]||0)+l.cases;});
+    const typeKey=p=>p.category+'|'+p.size+'|'+p.flavor;
+    let items=Object.entries(merged).map(([code,cases])=>({code,cases,p:pm[code]}));
+    // order items by like-type, then stability, for deterministic grouping
+    items.sort((a,b)=>{const ka=typeKey(a.p),kb=typeKey(b.p);if(ka!==kb)return ka<kb?-1:1;return a.p.stabilityRank-b.p.stabilityRank;});
+
+    const pallets=[];
+    const mkPallet=()=>{const x={contents:[],used:0};pallets.push(x);return x;};
+    const addTo=(pal,it,cases)=>{const frac=cases/it.p.casesPerPallet;const ex=pal.contents.find(c=>c.code===it.code);if(ex){ex.cases+=cases;ex.frac+=frac;}else pal.contents.push({code:it.code,cases,frac,p:it.p});pal.used+=frac;};
+
+    // ---- PHASE 1: same-product-whole ----
+    // each product fills as many FULL pallets as it can on its own; only the remainder carries forward.
+    const leftovers=[]; // {code,cases,p,frac}
+    for(const it of items){
+      const cpp=it.p.casesPerPallet;
+      let remaining=it.cases;
+      const fullPallets=Math.floor(remaining/cpp);
+      for(let k=0;k<fullPallets;k++){const pal=mkPallet();addTo(pal,it,cpp);}
+      remaining-=fullPallets*cpp;
+      if(remaining>0)leftovers.push({code:it.code,cases:remaining,p:it.p,frac:remaining/cpp});
+    }
+
+    // ---- PHASE 2: group remaining partials by like-type onto shared pallets ----
+    // leftovers already sorted by type (items order preserved). Pack first-fit-decreasing within
+    // type adjacency so like products share a pallet and gaps fill with the nearest type.
+    // Sort leftovers: by type, then largest-first (so big partials seed pallets, small ones fill gaps).
+    leftovers.sort((a,b)=>{const ka=typeKey(a.p),kb=typeKey(b.p);if(ka!==kb)return ka<kb?-1:1;return b.frac-a.frac;});
+    const sharedStart=pallets.length;
+    for(const lo of leftovers){
+      // prefer a shared pallet that ALREADY holds the same type (golden rule: like with like),
+      // else the same category, else any shared pallet with room, else open a new one.
+      let best=null,bestScore=-1;
+      for(let i=sharedStart;i<pallets.length;i++){
+        const pal=pallets[i];if(1-pal.used < lo.frac-1e-9)continue;
+        let score=0;
+        if(pal.contents.some(c=>typeKey(c.p)===typeKey(lo.p)))score=3;
+        else if(pal.contents.some(c=>c.p.category===lo.p.category))score=2;
+        else score=1;
+        // tie-break: tightest fit (leaves least waste) to keep pallets dense
+        const fitTight=1-(pal.used+lo.frac);
+        const composite=score*100 - fitTight; // higher score wins, then tighter fit
+        if(composite>bestScore){bestScore=composite;best=pal;}
+      }
+      if(!best)best=mkPallet();
+      addTo(best,lo,lo.cases);
+    }
+
+    // ---- finalize: drop empties, order each pallet bottom(least stable)→top(most stable) ----
+    const fp=pallets.filter(p=>p.contents.length>0);
+    fp.forEach(p=>p.contents.sort((a,b)=>a.p.stabilityRank-b.p.stabilityRank));
+    return fp;
+  },
+  palletPlan(r,modeOverride){
+    const mode=modeOverride||r.packing;
+    const stops=r.stops.map(id=>this.ord(id));
+    if(stops.length===0)return [];
+    // Manual rearrangement override: if the user has hand-edited pallets for this route's
+    // active packing mode, return the stored arrangement instead of recomputing.
+    if(r.manualPlan && r.manualPlanMode===mode && !modeOverride){
+      return r.manualPlan;
+    }
+    if(mode==='per-order'){
+      const groups=[];const handled=new Set();
+      (r.packGroups||[]).forEach(g=>{const m=g.filter(id=>r.stops.includes(id));if(m.length<2)return;m.forEach(id=>handled.add(id));const lines=m.flatMap(id=>this.ord(id).lines);groups.push({label:'Packed together: '+m.join(' + '),orderIds:m,pallets:this.computePallets(lines)});});
+      stops.forEach(o=>{if(handled.has(o.id))return;groups.push({label:o.id+' · '+o.customer,orderIds:[o.id],pallets:this.computePallets(o.lines)});});
+      return groups;
+    } else {
+      const sep=r.separated||[];const groups=[];const mixedLines=[];
+      stops.forEach(o=>{
+        if(sep.includes(o.id)){
+          const back=(r.backToMixed&&r.backToMixed[o.id])||[];
+          const own=o.lines.filter(l=>!back.includes(l.code));const bk=o.lines.filter(l=>back.includes(l.code));
+          if(own.length)groups.push({label:'Separate: '+o.id+' · '+o.customer,orderIds:[o.id],separated:true,pallets:this.computePallets(own)});
+          mixedLines.push(...bk);
+        } else mixedLines.push(...o.lines);
+      });
+      if(mixedLines.length)groups.unshift({label:'Mixed load (all stops merged)',orderIds:stops.filter(o=>!sep.includes(o.id)).map(o=>o.id),mixed:true,pallets:this.computePallets(mixedLines)});
+      return groups;
+    }
+  },
+  palletCount(r){return this.palletPlan(r).reduce((s,g)=>s+g.pallets.length,0);},
+  palletCountMode(r,mode){return this.palletPlan(r,mode).reduce((s,g)=>s+g.pallets.length,0);},
+  overCap(r){return this.palletCount(r)>this.truckCap(r.truckType);},
+  capPct(r){const c=this.truckCap(r.truckType);return c?Math.min(100,this.palletCount(r)/c*100):0;},
+
+  /* ---------- inspector ---------- */
+  inspectorHtml(){
+    this._bump; this.assignMode; this.palletAssign; this.palletSel;
+    const r=this.routes.find(x=>x.id===this.selectedRoute);
+    if(!r)return `<div class="h-full flex flex-col items-center justify-center text-center text-gray-400 gap-2 py-20"><div class="text-3xl">📦</div><div class="text-sm font-semibold">No route selected</div><div class="text-xs max-w-[220px]">Select a route to see its live pallet plan, grouping, and capacity.</div></div>`;
+    const cap=this.truckCap(r.truckType),used=this.palletCount(r);
+    let h=`<div class="mb-3 rounded-lg bg-panel border border-gray-200 p-3">
+      <div class="flex items-center justify-between"><span class="font-display font-bold text-sm" style="color:${r.color}">${r.name}</span>
+      <span class="text-[11px] font-mono ${used>cap?'text-[var(--red)] font-bold':'text-gray-600'}">${used}/${cap} pallets</span></div>
+      <div class="text-[11px] text-gray-500 mt-0.5">${r.packing==='mixed'?'Mixed — whole truck combined':'Per-order'} · ${r.loading} loading · ${r.stops.length} stops</div>
+      <button onclick="window._app.loadSheet(window._app.routes.find(x=>x.id==='${r.id}'))" class="mt-2 text-[10px] font-semibold bg-ink text-white px-2 py-1 rounded">📋 Load sheet</button>
+      ${r.manualPlan&&r.manualPlanMode===r.packing?`<button onclick="window._app.reoptimize('${r.id}')" class="mt-2 ml-1 text-[10px] font-semibold bg-[var(--amber)] text-white px-2 py-1 rounded">↻ Re-optimize (discard manual)</button><span class="ml-1 text-[9px] text-[var(--amber)] font-semibold">✋ manually arranged</span>`:''}</div>`;
+    const plan=this.palletPlan(r);
+    if(plan.length===0)return h+`<div class="text-xs text-gray-400 text-center py-6 italic">No stops yet — drag orders into this route.</div>`;
+    h+=`<div class="flex flex-wrap gap-2 mb-3 text-[10px]">`+Object.entries(CAT_COLOR).map(([c,col])=>`<span class="inline-flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-sm" style="background:${col}"></span>${c}</span>`).join('')+`</div>`;
+    // ASSIGN MODE: device assignment bar at top
+    if(this.assignMode){
+      const devs=this.devices.filter(d=>d.status==='Active');
+      const devBtns=devs.map(d=>{
+        const load=this.palletsForDevice(d.num).length;
+        return `<button onclick="window._app.assignSelToDevice(${d.num})" class="big-btn flex-1 rounded-lg border-2 border-gray-200 bg-white px-2 py-2 text-left hover:border-[var(--blue)]">
+          <div class="text-[11px] font-bold">${d.name}</div><div class="text-[9px] text-gray-400">${load} pallet(s) loaded</div></button>`;
+      }).join('');
+      h+=`<div class="mb-3 rounded-lg border-2 border-ink bg-ink/5 p-2.5">
+        <div class="flex items-center gap-2 mb-1.5"><span class="text-[11px] font-bold">${this.palletSel.length} pallet(s) selected</span>
+        ${this.palletSel.length?`<button onclick="window._app.clearPalletSel();window._app._bump++" class="ml-auto text-[10px] text-gray-500 underline">clear</button>`:''}</div>
+        <div class="text-[9px] uppercase tracking-wide font-bold text-gray-400 mb-1">Assign selected to device</div>
+        <div class="flex gap-1.5">${devBtns||'<span class="text-[10px] text-gray-400">No active devices</span>'}</div>
+      </div>`;
+    }
+    let groups=plan;
+    if(r.packing==='per-order'&&this.selectedOrder){const f=plan.filter(g=>g.orderIds.includes(this.selectedOrder));if(f.length){groups=f;h+=`<div class="text-[10px] text-[var(--blue)] font-semibold mb-2">Focused on selected stop — click route header to see all</div>`;}}
+    // snapshot the plan we render so manual moves operate on a stable structure
+    if(this.rearrange && (!r.manualPlan || r.manualPlanMode!==r.packing)){
+      r.manualPlan=JSON.parse(JSON.stringify(plan)); r.manualPlanMode=r.packing;
+    }
+    const renderPlan = (this.rearrange && r.manualPlan && r.manualPlanMode===r.packing) ? r.manualPlan : plan;
+    let gi=0; let groupsToRender = groups;
+    if(renderPlan!==plan){ groupsToRender = (r.packing==='per-order'&&this.selectedOrder) ? renderPlan.filter(g=>g.orderIds&&g.orderIds.includes(this.selectedOrder)) : renderPlan; }
+    groupsToRender.forEach((g,ggi)=>{
+      const realGroupIdx = renderPlan.indexOf(g);
+      const grpPalletIds = g.pallets.map((pal,pi)=>r.id+':'+realGroupIdx+':'+pi);
+      const grpSelectable = grpPalletIds.filter(id=>{const s=this.assignStatus(id);return s!=='picked'&&s!=='confirmed';});
+      const grpAllSel = grpSelectable.length>0 && grpSelectable.every(id=>this.palletSel.includes(id));
+      h+=`<div class="flex items-center gap-2 mt-1 mb-1.5">`;
+      if(this.assignMode){h+=`<input type="checkbox" ${grpAllSel?'checked':''} onclick="window._app.selectGroupPallets('${r.id}',${realGroupIdx});window._app._bump++">`;}
+      h+=`<span class="text-[11px] font-bold text-gray-700 flex-1">${g.label}</span><span class="text-[10px] text-gray-400 font-mono">${g.pallets.length} pal</span>`;
+      if(g.separated)h+=`<button onclick="window._app.openBackToMixed('${r.id}','${g.orderIds[0]}')" class="text-[9px] text-[var(--blue)] font-semibold hover:underline ml-1">↩ products → mixed</button>`;
+      h+=`</div><div class="grid grid-cols-1 gap-2 mb-2">`;
+      g.pallets.forEach((pal,pi)=>{ h+=this.palletBoxHtml(pal,gi,realGroupIdx,pi,r.id+':'+realGroupIdx+':'+pi); gi++; });
+      h+=`</div>`;
+    });
+    if(this.assignMode)h+=`<div class="text-[10px] text-gray-500 font-semibold mt-1">📟 Assign on — tick pallets or whole orders, then tap a device above. Picked/confirmed pallets are locked.</div>`;
+    if(this.rearrange)h+=`<div class="text-[10px] text-[var(--blue)] font-semibold mt-1">✋ Rearrange on — drag a product chip onto another pallet to move it. Capacity updates live.</div>`;
+    return h;
+  },
+  palletBoxHtml(pal,idx,gIdx,pIdx,palletId){
+    const usedPct=Math.round(pal.used*100);
+    const ordered=[...pal.contents].sort((a,b)=>b.p.stabilityRank-a.p.stabilityRank);
+    const over=usedPct>100;
+    const st=palletId?this.assignStatus(palletId):'unassigned';
+    const sel=palletId&&this.palletSel.includes(palletId);
+    const locked=(st==='picked'||st==='confirmed');
+    const stColor={unassigned:'text-gray-400',assigned:'text-[#7eb6ff]',picking:'text-[#ffd28a]',picked:'text-[#d6b8ff]',confirmed:'text-[#9be8b8]'}[st];
+    let rows=ordered.map(c=>`<div class="prod-chip flex items-center gap-2 rounded px-2 py-1 text-[11px] ${this.rearrange?'cursor-grab':''}" ${this.rearrange?'draggable="true"':''}
+      data-code="${c.code}" data-from="${idx}" data-g="${gIdx}" data-p="${pIdx}"
+      style="background:${CAT_COLOR[c.p.category]}1a;border-left:3px solid ${CAT_COLOR[c.p.category]}">
+      <span class="font-semibold flex-1 truncate">${c.p.name}</span><span class="font-mono text-gray-500">${c.cases}cs</span><span class="font-mono text-[10px] text-gray-400">${Math.round(c.frac*100)}%</span></div>`).join('');
+    const headBg = over?'bg-[var(--red)]':(sel?'bg-[var(--blue)]':'bg-ink');
+    return `<div class="ref-target rounded-lg border-2 ${over?'border-[var(--red)]':(sel?'border-[var(--blue)]':'border-gray-200')} bg-gradient-to-b from-white to-gray-50 overflow-hidden" data-refid="pallet:${idx+1}" data-pallet="${idx}">
+      <div class="flex items-center gap-2 px-2.5 py-1.5 ${headBg} text-white">
+        ${this.assignMode&&palletId?`<input type="checkbox" ${sel?'checked':''} ${locked?'disabled':''} onclick="window._app.togglePalletSel('${palletId}');window._app._bump++" class="shrink-0">`:''}
+        <span class="font-display font-bold text-xs">Pallet ${idx+1}</span>
+        ${st!=='unassigned'?`<span class="text-[9px] font-bold uppercase ${stColor}">${st}</span>`:''}
+        <span class="ml-auto text-[10px] font-mono ${over?'text-white':'text-gray-300'}">${usedPct}%${over?' ⚠':''}</span></div>
+      <div class="p-2 space-y-1 ${this.rearrange?'min-h-[34px]':''}" data-palletdrop="${idx}" data-g="${gIdx}" data-p="${pIdx}">${rows||(this.rearrange?'<div class=\"text-[10px] text-gray-300 italic text-center py-1\">drop here</div>':'')}</div>
+      <div class="px-2 pb-1 text-[9px] text-gray-400 italic">top = most stable · bottom = least stable</div></div>`;
+  },
+  // manually move a product (whole line) from one pallet to another within the same group
+  moveProduct(gFrom,pFrom,gTo,pTo,code){
+    const r=this.routes.find(x=>x.id===this.selectedRoute);
+    if(!r||!r.manualPlan){return;}
+    if(gFrom===gTo&&pFrom===pTo)return; // dropped on itself
+    if(gFrom!==gTo){this.flash('Products can only move between pallets within the same group.','warn');return;}
+    const grp=r.manualPlan[gFrom];if(!grp)return;
+    const src=grp.pallets[pFrom],dst=grp.pallets[pTo];if(!src||!dst)return;
+    const ci=src.contents.findIndex(c=>c.code===code);if(ci<0)return;
+    const moved=src.contents[ci];
+    // remove from source
+    src.contents.splice(ci,1);src.used-=moved.frac;
+    // merge into destination if same code already there, else push
+    const ex=dst.contents.find(c=>c.code===code);
+    if(ex){ex.cases+=moved.cases;ex.frac+=moved.frac;}else dst.contents.push(moved);
+    dst.used+=moved.frac;
+    // recompute used precisely & drop empty source pallet
+    src.used=src.contents.reduce((s,c)=>s+c.frac,0);
+    dst.used=dst.contents.reduce((s,c)=>s+c.frac,0);
+    grp.pallets=grp.pallets.filter(p=>p.contents.length>0);
+    // keep stability order within destination
+    dst.contents.sort((a,b)=>a.p.stabilityRank-b.p.stabilityRank);
+    this._bump++;
+    this.flash('Moved '+this.PM()[code].name+(dst.used>1?' — ⚠ pallet now over 100%':''), dst.used>1?'warn':'ok');
+  },
+  reoptimize(rid){
+    const r=this.routes.find(x=>x.id===rid);if(!r)return;
+    r.manualPlan=null;r.manualPlanMode=null;this._bump++;
+    this.flash('Re-optimized — manual arrangement discarded, golden-rule plan restored.');
+  },
+  // any change to a route's composition invalidates a manual pallet arrangement
+  invalidateManual(r){if(r&&r.manualPlan){r.manualPlan=null;r.manualPlanMode=null;}},
+  openBackToMixed(rid,orderId){
+    const r=this.routes.find(x=>x.id===rid);const o=this.ord(orderId);
+    const back=(r.backToMixed&&r.backToMixed[orderId])||[];
+    const rows=o.lines.map(l=>`<label class="flex items-center gap-2 py-1 text-sm"><input type="checkbox" data-code="${l.code}" ${back.includes(l.code)?'checked':''}> <span class="flex-1">${this.PM()[l.code].name}</span><span class="text-xs text-gray-400">${l.cases}cs</span></label>`).join('');
+    this.modalOpen(`<h3 class="font-display font-bold text-base mb-1">Send products to mixed pool</h3>
+      <p class="text-xs text-gray-500 mb-2">${o.id} · ${o.customer} is packed separately. Checked products rejoin the mixed truck load.</p>
+      <div class="border-y border-gray-100 py-1 max-h-60 overflow-y-auto">${rows}</div>
+      <div class="flex gap-2 mt-4"><button onclick="window._app.closeModal()" class="flex-1 py-2 rounded-lg border border-gray-200 font-semibold text-sm">Cancel</button>
+      <button onclick="window._app.saveBackToMixed('${rid}','${orderId}')" class="flex-1 py-2 rounded-lg bg-[var(--blue)] text-white font-semibold text-sm">Apply</button></div>`);
+  },
+  saveBackToMixed(rid,orderId){
+    const r=this.routes.find(x=>x.id===rid);r.backToMixed=r.backToMixed||{};
+    this.invalidateManual(r);
+    const set=[...document.querySelectorAll('.modal-bg input[type=checkbox]:checked')].map(c=>c.dataset.code);
+    r.backToMixed[orderId]=set;this.closeModal();this._bump++;
+  },
+
+  /* ---------- route config modal ---------- */
+  openRouteConfig(existing){
+    const r=existing||{name:'Route '+this.routeSeq,truckType:'Medium',loading:'Bay',packing:'per-order',driver:this.drivers[0]};
+    const isNew=!existing;
+    const trucks=this.trucks.map(t=>`<option ${t.name===r.truckType?'selected':''}>${t.name}</option>`).join('');
+    const drv=this.drivers.map(d=>`<option ${d===r.driver?'selected':''}>${d}</option>`).join('');
+    const tmpl=this.templates.map((t,i)=>`<option value="${i}">${t.name}</option>`).join('');
+    const seg=(arr,cur)=>arr.map(([v,l])=>`<button data-v="${v}" class="seg flex-1 py-1.5 rounded border text-xs font-semibold ${cur===v?'bg-ink text-white border-ink':'border-gray-200'}">${l}</button>`).join('');
+    this.modalOpen(`<h3 class="font-display font-bold text-lg mb-3">${isNew?'New Route':'Configure '+r.name}</h3>
+      <div class="space-y-3 text-sm">
+        ${isNew?`<div><label class="text-xs font-semibold text-gray-500">Apply template</label><select id="cfgTmpl" class="w-full border border-gray-200 rounded px-2 py-1.5 mt-0.5"><option value="">— none —</option>${tmpl}</select></div>`:''}
+        <div><label class="text-xs font-semibold text-gray-500">Route name</label><input id="cfgName" value="${r.name}" class="w-full border border-gray-200 rounded px-2 py-1.5 mt-0.5"></div>
+        <div class="grid grid-cols-2 gap-2">
+          <div><label class="text-xs font-semibold text-gray-500">Truck type</label><select id="cfgTruck" class="w-full border border-gray-200 rounded px-2 py-1.5 mt-0.5">${trucks}</select></div>
+          <div><label class="text-xs font-semibold text-gray-500">Driver</label><select id="cfgDriver" class="w-full border border-gray-200 rounded px-2 py-1.5 mt-0.5">${drv}</select></div>
+        </div>
+        <button onclick="window._app.addTruckInline()" class="text-[11px] text-[var(--blue)] font-semibold hover:underline">+ add truck type</button>
+        <div class="grid grid-cols-2 gap-2">
+          <div><label class="text-xs font-semibold text-gray-500">Loading</label><div class="flex gap-1 mt-0.5" id="cfgLoad">${seg([['Bay','Bay'],['Side','Side']],r.loading)}</div></div>
+          <div><label class="text-xs font-semibold text-gray-500">Packing</label><div class="flex gap-1 mt-0.5" id="cfgPack">${seg([['per-order','Per-Order'],['mixed','Mixed']],r.packing)}</div></div>
+        </div>
+      </div>
+      <div class="flex gap-2 mt-5"><button onclick="window._app.closeModal()" class="flex-1 py-2 rounded-lg border border-gray-200 font-semibold text-sm">Cancel</button>
+      <button onclick="window._app.saveRoute(${isNew},'${existing?existing.id:''}')" class="flex-1 py-2 rounded-lg bg-[var(--blue)] text-white font-semibold text-sm">${isNew?'Create route':'Save changes'}</button></div>`);
+    this._cfgPick={loading:r.loading,packing:r.packing};
+    this.$nextTick(()=>{
+      const wire=(sel,key)=>document.querySelectorAll('#'+sel+' button').forEach(b=>b.onclick=()=>{this._cfgPick[key]=b.dataset.v;document.querySelectorAll('#'+sel+' button').forEach(x=>{x.className=x.className.replace('bg-ink text-white border-ink','border-gray-200');});b.className=b.className.replace('border-gray-200','bg-ink text-white border-ink');});
+      wire('cfgLoad','loading');wire('cfgPack','packing');
+      const ts=document.getElementById('cfgTmpl');
+      if(ts)ts.onchange=e=>{const t=this.templates[e.target.value];if(!t)return;document.getElementById('cfgName').value=t.name+' '+this.routeSeq;document.getElementById('cfgTruck').value=t.truckType;document.getElementById('cfgDriver').value=t.driver;this._cfgPick={loading:t.loading,packing:t.packing};['cfgLoad','cfgPack'].forEach(s=>document.querySelectorAll('#'+s+' button').forEach(b=>{const on=(s==='cfgLoad'?t.loading:t.packing)===b.dataset.v;b.className=b.className.replace('bg-ink text-white border-ink','border-gray-200');if(on)b.className=b.className.replace('border-gray-200','bg-ink text-white border-ink');}));this.flash('Template applied (settings only, not stops).');};
+    });
+  },
+  addTruckInline(){const name=prompt('Truck type name?');if(!name)return;const cap=parseInt(prompt('Pallet capacity?','8'));if(!cap)return;this.trucks.push({name,capacity:cap});const s=document.getElementById('cfgTruck');if(s){s.innerHTML+=`<option selected>${name}</option>`;}this.flash('Added truck type '+name);},
+  saveRoute(isNew,id){
+    const data={name:document.getElementById('cfgName').value||('Route '+this.routeSeq),truckType:document.getElementById('cfgTruck').value,driver:document.getElementById('cfgDriver').value,loading:this._cfgPick.loading,packing:this._cfgPick.packing};
+    if(isNew){this.routes.push({id:'R'+(this.routeSeq++),...data,color:ROUTE_COLORS[this.routes.length%ROUTE_COLORS.length],stops:[],packGroups:[],separated:[],backToMixed:{},confirmed:false,scheduled:null});this.selectedRoute=this.routes[this.routes.length-1].id;}
+    else{const r=this.routes.find(x=>x.id===id);this.invalidateManual(r);Object.assign(r,data);}
+    this.closeModal();
+  },
+
+  /* ---------- load sheet ---------- */
+  loadSheet(r){
+    const plan=this.palletPlan(r);
+    // aggregate products across whole route
+    const agg={};r.stops.forEach(id=>this.ord(id).lines.forEach(l=>{agg[l.code]=(agg[l.code]||0)+l.cases;}));
+    const pm=this.PM();
+    const aggRows=Object.entries(agg).sort((a,b)=>this.catalogPickOrder.indexOf(a[0])-this.catalogPickOrder.indexOf(b[0])).map(([code,cs])=>`<tr class="border-t border-gray-100"><td class="px-2 py-1 font-mono text-xs">${code}</td><td class="px-2 py-1">${pm[code].name}</td><td class="px-2 py-1 text-right font-mono">${cs} cs</td></tr>`).join('');
+    const stopRows=r.stops.map((id,i)=>{const o=this.ord(id);return `<tr class="border-t border-gray-100"><td class="px-2 py-1">${i+1}</td><td class="px-2 py-1 font-mono text-xs">${id}</td><td class="px-2 py-1">${o.customer}</td><td class="px-2 py-1">${o.zip}</td><td class="px-2 py-1 text-right font-mono">${this.orderFrac(o).toFixed(1)} pal</td></tr>`;}).join('');
+    const used=this.palletCount(r),cap=this.truckCap(r.truckType);
+    this.modalOpen(`<div id="lsContent"><div class="flex items-center justify-between mb-3"><h3 class="font-display font-extrabold text-xl">Load Sheet — ${r.name}</h3>
+      <button onclick="window._app.printEl('lsContent')" class="text-xs font-semibold bg-ink text-white px-2.5 py-1.5 rounded">🖨 Print</button></div>
+      <div class="grid grid-cols-3 gap-2 mb-4 text-center">
+        <div class="bg-panel rounded-lg p-2"><div class="text-[10px] text-gray-400 uppercase">Truck</div><div class="font-bold">${r.truckType}</div></div>
+        <div class="bg-panel rounded-lg p-2"><div class="text-[10px] text-gray-400 uppercase">Pallets</div><div class="font-bold ${used>cap?'text-[var(--red)]':''}">${used} / ${cap}</div></div>
+        <div class="bg-panel rounded-lg p-2"><div class="text-[10px] text-gray-400 uppercase">Driver</div><div class="font-bold">${r.driver}</div></div>
+      </div>
+      <div class="font-bold text-sm mb-1">Aggregated products (staging order)</div>
+      <table class="w-full text-sm mb-4 border border-gray-100 rounded"><tbody>${aggRows}</tbody></table>
+      <div class="font-bold text-sm mb-1">Per-stop breakdown</div>
+      <table class="w-full text-sm border border-gray-100 rounded"><thead class="bg-gray-50 text-[10px] uppercase text-gray-400"><tr><th class="px-2 py-1 text-left">#</th><th class="px-2 py-1 text-left">Order</th><th class="px-2 py-1 text-left">Customer</th><th class="px-2 py-1 text-left">Zip</th><th class="px-2 py-1 text-right">Pallets</th></tr></thead><tbody>${stopRows}</tbody></table>
+      </div>`,true);
+  },
+  printEl(elId){
+    const el=document.getElementById(elId);const pa=document.getElementById('printArea');
+    pa.innerHTML=el.innerHTML;pa.classList.remove('hidden');window.print();setTimeout(()=>pa.classList.add('hidden'),300);
+  },
+
+  /* ---------- picking (pallet-centric) ---------- */
+  orderToItems(o){const pm=this.PM();return o.lines.map(l=>({code:l.code,name:pm[l.code].name,cat:pm[l.code].category,cases:l.cases,stab:pm[l.code].stabilityRank,pick:this.catalogPickOrder.indexOf(l.code)}));},
+  // Flatten every route's pallet plan into a stable, loading-ordered list of pallets.
+  // Each pallet: {id, routeId, routeName, color, groupLabel, orderIds, palLabel, items[], a(ssignment)}
+  allPallets(){
+    const out=[];
+    this.routes.forEach(r=>{
+      const plan=this.palletPlan(r);
+      // loading order = reverse stop order for Bay+per-order (first-in-last-out), else plan order
+      plan.forEach((g,gi)=>{
+        g.pallets.forEach((pal,pi)=>{
+          const id=r.id+':'+gi+':'+pi;
+          const items=pal.contents.map(c=>({code:c.code,name:c.p.name,cat:c.p.category,cases:c.cases,stab:c.p.stabilityRank,pick:this.catalogPickOrder.indexOf(c.code)}))
+            .sort((a,b)=>a.stab-b.stab||a.pick-b.pick); // loading sequence
+          out.push({id,routeId:r.id,routeName:r.name,color:r.color,groupLabel:g.label,orderIds:g.orderIds||[],
+            palLabel:'Pallet '+(pi+1)+'/'+g.pallets.length,items,
+            a:this.palletAssign[id]||null});
+        });
+      });
+    });
+    return out;
+  },
+  palletsForDevice(dev){return this.allPallets().filter(p=>p.a&&p.a.device===dev);},
+  routeProgress(rid){
+    this._bump; this.palletAssign;
+    const pals=this.allPallets().filter(p=>p.routeId===rid);
+    const total=pals.length;let assigned=0,picked=0,confirmed=0;
+    pals.forEach(p=>{const s=this.assignStatus(p.id);if(s==='confirmed')confirmed++;else if(s==='picked')picked++;else if(s==='assigned'||s==='picking')assigned++;});
+    return {total,assigned,picked,confirmed};
+  },
+  // A "pick list" = the set of pallets assigned to ONE device within ONE route (the batch the picker works).
+  pickLists(){
+    const all=this.allPallets().filter(p=>p.a);
+    const map={};
+    all.forEach(p=>{const key=p.routeId+'|'+p.a.device;(map[key]=map[key]||{key,routeId:p.routeId,routeName:p.routeName,color:p.color,device:p.a.device,pallets:[]}).pallets.push(p);});
+    return Object.values(map);
+  },
+  pickListsForRoute(rid){return this.pickLists().filter(l=>l.routeId===rid);},
+  // overall status of a pick list = least-advanced pallet status
+  listStatus(list){
+    const order=['assigned','picking','picked','confirmed'];
+    let min=3;list.pallets.forEach(p=>{const s=this.assignStatus(p.id);const i=order.indexOf(s);if(i>=0&&i<min)min=i;});
+    return order[min];
+  },
+  listItems(list){ // all items across the list's pallets, merged by code, loading order
+    const merged={};list.pallets.forEach(p=>p.items.forEach(it=>{merged[it.code]=merged[it.code]||{...it,cases:0};merged[it.code].cases+=it.cases;}));
+    return Object.values(merged).sort((a,b)=>a.stab-b.stab||a.pick-b.pick);
+  },
+  listResults(list){ // merged picked results across pallets (only meaningful once picked)
+    const merged={};list.pallets.forEach(p=>(p.a.results||[]).forEach(r=>{merged[r.code]=merged[r.code]||{...r,cases:0,picked:0};merged[r.code].cases+=r.cases;merged[r.code].picked+=r.picked;merged[r.code].short=merged[r.code].cases-merged[r.code].picked;}));
+    return Object.values(merged).sort((a,b)=>a.stab-b.stab||a.pick-b.pick);
+  },
+  deviceName(num){const d=this.devices.find(d=>d.num===num);return d?d.name:('Device '+num);},
+  assignStatus(id){const a=this.palletAssign[id];return a?a.status:'unassigned';},
+  // manager selection
+  togglePalletSel(id){const i=this.palletSel.indexOf(id);if(i>=0)this.palletSel.splice(i,1);else this.palletSel.push(id);},
+  selectOrderPallets(routeId,gi){ // select/deselect all pallets of one group(order)
+    const ids=this.allPallets().filter(p=>p.id.startsWith(routeId+':'+gi+':')).map(p=>p.id);
+    const allSel=ids.every(id=>this.palletSel.includes(id));
+    if(allSel)this.palletSel=this.palletSel.filter(id=>!ids.includes(id));
+    else ids.forEach(id=>{if(!this.palletSel.includes(id))this.palletSel.push(id);});
+  },
+  clearPalletSel(){this.palletSel=[];},
+  assignPalletsTo(dev){
+    if(this.palletSel.length===0){this.flash('Select pallets first.','warn');return;}
+    let n=0;this.palletSel.forEach(id=>{
+      const cur=this.palletAssign[id];
+      if(cur&&(cur.status==='picked'||cur.status==='confirmed')){return;} // don't reassign completed
+      this.palletAssign[id]={device:dev,status:'assigned',results:null};n++;
+    });
+    this.palletAssign={...this.palletAssign};
+    this.clearPalletSel();this.assignPalletMenu=false;this._bump++;
+    const d=this.devices.find(x=>x.num===dev);
+    this.flash(n+' pallet(s) assigned to '+(d?d.name:('Device '+dev))+'.');
+  },
+  unassignPallet(id){if(this.palletAssign[id]){delete this.palletAssign[id];this.palletAssign={...this.palletAssign};this._bump++;}},
+
+  /* ---------- shared pick-list panel (used by Picker Device AND Manager Handheld) ---------- */
+  pickListPanelHtml(opts){
+    // opts: {device:N|null, role:'picker'|'manager'}
+    this._bump; this.activeDevice; this.palletAssign;
+    const role=opts.role, dev=opts.device;
+    const all=this.allPallets();
+    // group by route, then by group(order)
+    const byRoute={};
+    all.forEach(p=>{ (byRoute[p.routeId]=byRoute[p.routeId]||{route:p.routeName,color:p.color,groups:{}}); const G=byRoute[p.routeId].groups; (G[p.groupLabel]=G[p.groupLabel]||{label:p.groupLabel,pallets:[]}).pallets.push(p); });
+    const statusPill=(s)=>{
+      const m={unassigned:['bg-gray-100','text-gray-500','Unassigned'],assigned:['bg-blue-50','text-[var(--blue)]','Assigned'],picking:['bg-amber-50','text-[var(--amber)]','Picking'],picked:['bg-purple-50','text-[#8b5cf6]','Picked · awaiting confirm'],confirmed:['bg-green-50','text-[var(--green)]','Confirmed']};
+      const x=m[s]||m.unassigned;return `<span class="text-[10px] font-bold px-1.5 py-0.5 rounded ${x[0]} ${x[1]} uppercase tracking-wide">${x[2]}</span>`;
+    };
+    if(this.routes.length===0)return `<div class="p-8 text-center text-gray-400"><div class="text-5xl mb-3">📦</div><div class="text-lg font-semibold">No pallets to pick</div><div class="text-sm mt-1">Build routes with stops on the Dashboard first.</div></div>`;
+
+    let h=`<div class="p-4 space-y-4">`;
+    // manager assign action bar (when pallets selected)
+    if(role==='manager' && this.palletSel.length>0){
+      const devOpts=this.devices.filter(d=>d.status==='Active').map(d=>`<option value="${d.num}">${d.name}</option>`).join('');
+      h+=`<div class="sticky top-0 z-10 bg-ink text-white rounded-xl px-3 py-2.5 flex items-center gap-2 text-sm shadow-lg">
+        <span class="font-semibold">${this.palletSel.length} pallet(s) selected</span>
+        <select id="hhAssignDev" class="ml-auto bg-white/15 text-white rounded px-2 py-1 text-xs border border-white/20">${devOpts}</select>
+        <button onclick="window._app.assignPalletsTo(+document.getElementById('hhAssignDev').value)" class="bg-[var(--blue)] px-3 py-1.5 rounded font-semibold text-xs">Assign →</button>
+        <button onclick="window._app.clearPalletSel();window._app._bump++" class="text-gray-300 underline text-xs">clear</button>
+      </div>`;
+    }
+
+    Object.entries(byRoute).forEach(([rid,rt])=>{
+      const groupsArr=Object.values(rt.groups);
+      if(role==='picker'){
+        // picker role unused for listing now (auto-start handles it), keep minimal
+        return;
+      }
+      // MANAGER VIEW
+      const lists=this.pickListsForRoute(rid);
+      const unassigned=this.allPallets().filter(p=>p.routeId===rid&&!p.a);
+      h+=`<div class="rounded-2xl border-2 border-gray-200 bg-white overflow-hidden">
+        <div class="px-3 py-2 flex items-center gap-2" style="border-left:6px solid ${rt.color}">
+          <span class="font-display font-bold text-base">${rt.route}</span>
+          <span class="text-[11px] text-gray-400 ml-auto">${lists.length} pick list(s) · ${unassigned.length} unassigned</span>
+        </div>`;
+      // pick lists (one per device)
+      lists.forEach(list=>{
+        const st=this.listStatus(list);
+        const items=this.listItems(list);
+        const disc=this.listResults(list).filter(r=>r.short>0).length;
+        h+=`<div class="border-t border-gray-100 px-3 py-2.5">
+          <div class="flex items-center gap-2">
+            <span class="w-7 h-7 rounded-lg bg-ink text-white text-xs font-bold flex items-center justify-center shrink-0">📟</span>
+            <div class="min-w-0 flex-1">
+              <div class="text-[13px] font-bold">${this.deviceName(list.device)}</div>
+              <div class="text-[10px] text-gray-400">${list.pallets.length} pallet(s) · ${items.length} products${disc?` · <span class="text-[var(--red)] font-semibold">${disc} short</span>`:''}</div>
+            </div>
+            ${statusPill(st)}
+          </div>
+          <div class="flex gap-2 mt-2">`;
+        if(st==='picked'){
+          h+=`<button onclick="window._app.openListConfirm('${list.key}')" class="big-btn flex-1 bg-ink text-white text-[11px] font-bold px-2.5 py-2 rounded-lg">Review &amp; confirm list ▸</button>`;
+        } else if(st==='confirmed'){
+          h+=`<span class="flex-1 text-center text-[11px] font-semibold text-[var(--green)] py-2">✓ Confirmed</span>`;
+        } else {
+          h+=`<span class="flex-1 text-center text-[11px] text-gray-400 py-2">${st==='picking'?'Picker in progress…':'Awaiting picker'}</span>`;
+        }
+        if(st!=='confirmed')h+=`<button onclick="window._app.unassignList('${list.key}')" class="text-[10px] text-[var(--red)] font-semibold px-2">unassign</button>`;
+        h+=`</div></div>`;
+      });
+      // unassigned pallets — selectable for assignment
+      if(unassigned.length){
+        const byG={};unassigned.forEach(p=>{(byG[p.groupLabel]=byG[p.groupLabel]||[]).push(p);});
+        h+=`<div class="border-t border-gray-100 bg-gray-50/50 px-3 py-2">
+          <div class="text-[10px] uppercase tracking-wide font-bold text-gray-400 mb-1.5">Unassigned — select to assign</div>`;
+        Object.entries(byG).forEach(([label,ps])=>{
+          const gi=ps[0].id.split(':')[1];
+          const allSel=ps.every(p=>this.palletSel.includes(p.id));
+          h+=`<div class="mb-1.5"><label class="flex items-center gap-2 text-[11px] font-bold text-gray-600 mb-1"><input type="checkbox" ${allSel?'checked':''} onclick="window._app.selectOrderPallets('${rid}',${gi});window._app._bump++"> ${label}</label>
+            <div class="space-y-1 pl-5">`;
+          ps.forEach(p=>{const sel=this.palletSel.includes(p.id);
+            h+=`<label class="flex items-center gap-2 rounded-lg border px-2.5 py-1.5 ${sel?'border-[var(--blue)] bg-blue-50':'border-gray-200 bg-white'}">
+              <input type="checkbox" ${sel?'checked':''} onclick="window._app.togglePalletSel('${p.id}');window._app._bump++">
+              <span class="text-[12px] font-semibold flex-1">${p.palLabel} <span class="text-gray-400 font-normal">· ${p.items.length} items</span></span></label>`;});
+          h+=`</div></div>`;
+        });
+        h+=`</div>`;
+      }
+      h+=`</div>`;
+    });
+    h+=`</div>`;
+    return h;
+  },
+  unassignList(key){
+    const list=this.pickLists().find(l=>l.key===key);if(!list)return;
+    list.pallets.forEach(p=>{if(this.assignStatus(p.id)!=='confirmed'){delete this.palletAssign[p.id];}});
+    this.palletAssign={...this.palletAssign};this._bump++;this.flash('Pick list unassigned.');
+  },
+  pickingBadge(){this._bump;this.palletAssign;return this.pickLists().filter(l=>this.listStatus(l)==='picked').length;},
+  openStatusModal(rid){
+    // rid optional: scope to one route, else all
+    const lists=this.pickLists().filter(l=>!rid||l.routeId===rid);
+    const pill=(s)=>{const m={assigned:['bg-blue-50','text-[var(--blue)]','Assigned'],picking:['bg-amber-50','text-[var(--amber)]','Picking'],picked:['bg-purple-50','text-[#8b5cf6]','Awaiting confirm'],confirmed:['bg-green-50','text-[var(--green)]','Confirmed']}[s]||['bg-gray-100','text-gray-500',s];return `<span class="text-[10px] font-bold px-1.5 py-0.5 rounded ${m[0]} ${m[1]} uppercase">${m[2]}</span>`;};
+    let body='';
+    if(lists.length===0){body=`<div class="text-sm text-gray-400 text-center py-8">No pick lists yet. Assign pallets to a device (Inspector → Assign).</div>`;}
+    else{
+      // group by route
+      const byR={};lists.forEach(l=>{(byR[l.routeId]=byR[l.routeId]||{name:l.routeName,color:l.color,lists:[]}).lists.push(l);});
+      Object.values(byR).forEach(rt=>{
+        const prog=this.routeProgress(rt.lists[0].routeId);
+        body+=`<div class="rounded-xl border border-gray-200 overflow-hidden mb-3">
+          <div class="px-3 py-2 flex items-center gap-2 bg-gray-50" style="border-left:5px solid ${rt.color}">
+            <span class="font-display font-bold text-sm">${rt.name}</span>
+            <span class="text-[10px] text-gray-400 ml-auto">${prog.confirmed}/${prog.total} confirmed</span></div>`;
+        rt.lists.forEach(l=>{
+          const st=this.listStatus(l);const items=this.listItems(l);
+          const disc=this.listResults(l).filter(r=>r.short>0).length;
+          body+=`<div class="border-t border-gray-100 px-3 py-2.5 flex items-center gap-2">
+            <span class="w-7 h-7 rounded-lg bg-ink text-white text-xs font-bold flex items-center justify-center shrink-0">📟</span>
+            <div class="min-w-0 flex-1"><div class="text-[13px] font-bold">${this.deviceName(l.device)}</div>
+            <div class="text-[10px] text-gray-400">${l.pallets.length} pallet(s) · ${items.length} products${disc?` · <span class="text-[var(--red)] font-semibold">${disc} short</span>`:''}</div></div>
+            ${pill(st)}
+            ${st==='picked'?`<button onclick="window._app.openListConfirm('${l.key}')" class="ml-1 bg-ink text-white text-[11px] font-bold px-2.5 py-1.5 rounded-lg">Review ▸</button>`:''}
+          </div>`;
+        });
+        body+=`</div>`;
+      });
+    }
+    this.modalOpen(`<h3 class="font-display font-bold text-lg mb-1">Picking status${rid?' — '+(this.routes.find(r=>r.id===rid)||{}).name:''}</h3>
+      <div class="text-xs text-gray-500 mb-3">Pick lists grouped by route → device. Review &amp; confirm picked lists here or on the Manager Handheld.</div>
+      <div class="max-h-[60vh] overflow-y-auto">${body}</div>
+      <button onclick="window._app.closeModal()" class="w-full mt-3 py-2 rounded-lg border border-gray-200 font-semibold text-sm">Close</button>`,true);
+  },
+
+  /* ---------- picker device screen ---------- */
+  pickerDeviceName(){const d=this.devices.find(d=>d.num===this.activeDevice);return d?d.name:'Device';},
+  pickerHtml(){
+    this._bump; this.activeDevice; this.palletAssign;
+    // auto-start: if there are items to pick on this device and no active session, build one
+    if(!this.picker){
+      const pend=this.palletsForDevice(this.activeDevice).filter(p=>p.a.status==='assigned'||p.a.status==='picking');
+      if(pend.length>0){ this.buildPickerSession(this.activeDevice); }
+    }
+    // if a session exists but is for a different device (switched), rebuild
+    if(this.picker && this.picker.dev!==this.activeDevice){
+      this.picker=null;
+      const pend=this.palletsForDevice(this.activeDevice).filter(p=>p.a.status==='assigned'||p.a.status==='picking');
+      if(pend.length>0)this.buildPickerSession(this.activeDevice);
+    }
+    if(this.picker)return this.pickerWorkHtml();
+    // nothing to auto-start: show any already-picked pallets (awaiting manager confirm) with re-pick
+    const mine=this.palletsForDevice(this.activeDevice);
+    const picked=mine.filter(p=>p.a.status==='picked');
+    const confirmed=mine.filter(p=>p.a.status==='confirmed');
+    if(picked.length||confirmed.length){
+      let h=`<div class="p-5 space-y-3">
+        <div class="text-center mb-2"><div class="text-4xl mb-1">✅</div><div class="font-display font-bold text-lg">All assigned items picked</div><div class="text-sm text-gray-400">Awaiting manager confirmation. You can re-pick a batch until it's confirmed.</div></div>`;
+      picked.forEach(p=>{
+        const disc=(p.a.results||[]).filter(r=>r.short>0).length;
+        h+=`<div class="rounded-2xl border-2 border-gray-200 bg-white p-4" style="border-left:6px solid ${p.color}">
+          <div class="flex items-center justify-between"><span class="font-bold">${p.routeName} · ${p.palLabel}</span>
+          <span class="text-[11px] font-bold px-2 py-1 rounded-full bg-purple-50 text-[#8b5cf6] uppercase">Picked</span></div>
+          <div class="text-sm text-gray-400 mt-0.5">${p.groupLabel}${disc?` · <span class="text-[var(--red)] font-semibold">${disc} short</span>`:''}</div>
+          <button onclick="window._app.repickPallet('${p.id}')" class="big-btn mt-2 w-full py-2.5 rounded-xl bg-[var(--amber)] text-white font-bold text-sm">↻ Re-pick this batch</button></div>`;
+      });
+      confirmed.forEach(p=>{
+        h+=`<div class="rounded-2xl border-2 border-green-100 bg-green-50 p-4" style="border-left:6px solid ${p.color}">
+          <div class="flex items-center justify-between"><span class="font-bold">${p.routeName} · ${p.palLabel}</span>
+          <span class="text-[11px] font-bold px-2 py-1 rounded-full bg-green-100 text-[var(--green)] uppercase">Confirmed ✓</span></div>
+          <div class="text-sm text-gray-400 mt-0.5">${p.groupLabel}</div></div>`;
+      });
+      h+=`</div>`;return h;
+    }
+    return `<div class="p-8 text-center text-gray-400"><div class="text-5xl mb-3">📭</div><div class="text-lg font-semibold">Nothing assigned</div><div class="text-sm mt-1">When the manager assigns pallets to this device, the pick list appears here automatically.</div></div>`;
+  },
+  buildPickerSession(dev){
+    const pals=this.palletsForDevice(dev).filter(p=>p.a.status==='assigned'||p.a.status==='picking');
+    if(pals.length===0)return;
+    pals.forEach(p=>{this.palletAssign[p.id]={...this.palletAssign[p.id],status:'picking'};});
+    this.palletAssign={...this.palletAssign};
+    let items=[];
+    pals.forEach(p=>p.items.forEach(it=>items.push({...it,palletId:p.id})));
+    items.sort((a,b)=>a.stab-b.stab||a.pick-b.pick);
+    this.picker={dev,palletIds:pals.map(p=>p.id),idx:0,results:[],items,shorted:false,partialFor:null,partialQty:0};
+  },
+  startPickFor(dev){this.buildPickerSession(dev);this._bump++;},
+  // picker re-picks a pallet that was already submitted (manager hasn't confirmed): reset to assigned, rebuild session
+  repickPallet(palletId){
+    const a=this.palletAssign[palletId];if(!a)return;
+    this.palletAssign[palletId]={...a,status:'assigned',results:null};this.palletAssign={...this.palletAssign};
+    this.picker=null;this._bump++;
+    this.flash('Re-picking — previous result cleared for this batch.','warn');
+  },
+  pickerWorkHtml(){
+    const {idx,items,results}=this.picker;
+    const done=idx>=items.length;
+    if(done)return this.pickerCompleteHtml();
+    const it=items[idx];
+    const pct=Math.round(idx/items.length*100);
+    // LEFT: full list (done / current / pending)
+    let list='';
+    items.forEach((x,i)=>{
+      let state,badge,extra='';
+      if(i<idx){ const res=results[i]; const short=res&&res.short>0;
+        state=short?'bg-red-50 border-red-100':'bg-green-50 border-green-100';
+        badge=short?`<span class="text-[10px] font-bold text-[var(--red)]">${res.picked}/${x.cases}</span>`:`<span class="text-[10px] font-bold text-[var(--green)]">✓ ${x.cases}</span>`;
+      } else if(i===idx){ state='bg-white border-[var(--blue)] ring-2 ring-[var(--blue)]'; badge=`<span class="text-[10px] font-bold text-[var(--blue)]">now</span>`; }
+      else { state='bg-gray-50 border-gray-100 opacity-70'; badge=`<span class="text-[10px] text-gray-400">${x.cases} cs</span>`; }
+      list+=`<div class="flex items-center gap-2 rounded-lg border px-2.5 py-2 ${state}">
+        <span class="w-2.5 h-2.5 rounded-full shrink-0" style="background:${CAT_COLOR[x.cat]}"></span>
+        <div class="min-w-0 flex-1"><div class="text-[12px] font-semibold truncate">${x.name}</div><div class="text-[9px] text-gray-400 font-mono">${x.code}</div></div>
+        ${badge}</div>`;
+    });
+    // partial entry panel state
+    const partialOpen=this.picker.partialFor===idx;
+    const pq=this.picker.partialQty;
+    let actions;
+    if(partialOpen){
+      actions=`<div class="mt-6 bg-amber-50 border-2 border-[var(--amber)] rounded-2xl p-4">
+        <div class="text-sm font-bold text-[var(--amber)] mb-2 text-center">How many cases were actually picked?</div>
+        <div class="flex items-center justify-center gap-3">
+          <button onclick="window._app.partialStep(-1)" class="big-btn w-14 h-14 rounded-full bg-white border-2 border-gray-200 text-2xl font-bold">−</button>
+          <div class="w-24 text-center"><div class="text-5xl font-display font-black">${pq}</div><div class="text-[10px] text-gray-400">of ${it.cases}</div></div>
+          <button onclick="window._app.partialStep(1)" class="big-btn w-14 h-14 rounded-full bg-white border-2 border-gray-200 text-2xl font-bold">+</button>
+        </div>
+        <div class="flex gap-2 mt-4">
+          <button onclick="window._app.cancelPartial()" class="flex-1 py-3 rounded-xl border-2 border-gray-200 font-bold">Cancel</button>
+          <button onclick="window._app.confirmPartial()" class="flex-1 py-3 rounded-xl bg-[var(--amber)] text-white font-bold">Confirm ${pq} cases</button>
+        </div></div>`;
+    } else {
+      actions=`<div class="grid grid-cols-3 gap-3 mt-6">
+        <button onclick="window._app.pickAnswer(${it.cases},'picked')" class="big-btn py-6 rounded-2xl bg-[var(--green)] text-white font-display font-bold text-lg">✓ Picked</button>
+        <button onclick="window._app.openPartial()" class="big-btn py-6 rounded-2xl bg-[var(--amber)] text-white font-display font-bold text-lg">≈ Partial</button>
+        <button onclick="window._app.pickAnswer(0,'not')" class="big-btn py-6 rounded-2xl bg-[var(--red)] text-white font-display font-bold text-lg">✕ None</button>
+      </div>`;
+    }
+    return `<div class="flex h-full">
+      <!-- LEFT: full list -->
+      <div class="w-[300px] shrink-0 border-r border-gray-200 bg-gray-50/60 flex flex-col">
+        <div class="px-3 py-2.5 border-b border-gray-200 bg-white">
+          <div class="flex items-center justify-between"><span class="text-xs font-bold uppercase tracking-wide text-gray-500">Pick list</span>
+          <span class="text-[10px] font-mono text-gray-400">${idx}/${items.length}</span></div>
+          <div class="h-1.5 rounded-full bg-gray-200 overflow-hidden mt-1.5"><div class="h-full bg-[var(--blue)]" style="width:${pct}%"></div></div>
+        </div>
+        <div class="flex-1 overflow-y-auto p-2 space-y-1.5">${list}</div>
+        <div class="px-3 py-2 border-t border-gray-200 bg-white text-[10px] text-gray-400">${this.picker.palletIds.length} pallet(s) · loading order</div>
+      </div>
+      <!-- RIGHT: current item -->
+      <div class="flex-1 overflow-y-auto p-6">
+        <div class="flex items-center justify-between mb-3 max-w-md mx-auto">
+          <div class="text-sm font-bold text-gray-500">Item ${idx+1} of ${items.length}</div>
+          <button onclick="window._app.picker=null;window._app._bump++" class="text-sm text-gray-400">✕ exit</button>
+        </div>
+        <div class="max-w-md mx-auto">
+          <div class="bg-white rounded-3xl border-2 border-gray-200 p-8 text-center shadow-sm fade-in">
+            <div class="inline-block px-3 py-1 rounded-full text-sm font-bold text-white mb-4" style="background:${CAT_COLOR[it.cat]}">${it.cat}</div>
+            <div class="font-display font-black text-4xl tracking-tight leading-tight">${it.name}</div>
+            <div class="font-mono text-gray-400 mt-2">code ${it.code}</div>
+            <div class="mt-6 text-7xl font-display font-black">${it.cases}<span class="text-2xl text-gray-400 font-bold ml-2">cases</span></div>
+          </div>
+          ${actions}
+          <div class="text-[10px] text-gray-400 text-center mt-3">Forced sequential — answer to advance. Short qty re-sequences the rest.</div>
+        </div>
+      </div>
+    </div>`;
+  },
+  openPartial(){this.picker.partialFor=this.picker.idx;this.picker.partialQty=Math.max(0,this.picker.items[this.picker.idx].cases-1);this._bump++;},
+  partialStep(d){const it=this.picker.items[this.picker.idx];this.picker.partialQty=Math.min(it.cases,Math.max(0,this.picker.partialQty+d));this._bump++;},
+  cancelPartial(){this.picker.partialFor=null;this._bump++;},
+  confirmPartial(){const q=this.picker.partialQty;this.picker.partialFor=null;this.pickAnswer(q,'partial');},
+  pickAnswer(qty,kind){
+    const it=this.picker.items[this.picker.idx];
+    this.picker.results.push({...it,picked:qty,short:it.cases-qty,kind});
+    this.picker.idx++;
+    // golden-rule re-sequence: if short, re-sort the remaining unpicked items to re-maximize fill
+    if(qty<it.cases){const rest=this.picker.items.slice(this.picker.idx);rest.sort((a,b)=>a.stab-b.stab||a.pick-b.pick);this.picker.items=this.picker.items.slice(0,this.picker.idx).concat(rest);this.picker.shorted=true;}
+    this._bump++;
+  },
+  pickerCompleteHtml(){
+    const {results,shorted,palletIds,dev}=this.picker;
+    // mark each pallet picked, attach its own results
+    palletIds.forEach(pid=>{
+      const palResults=results.filter(r=>r.palletId===pid);
+      this.palletAssign[pid]={...this.palletAssign[pid],status:'picked',results:palResults};
+    });
+    this.palletAssign={...this.palletAssign};
+    const disc=results.filter(r=>r.short>0);
+    const note=shorted?`<div class="mb-4 rounded-xl bg-amber-50 border border-amber-200 p-3 text-base">⟳ <b>Unpicked items re-sequenced.</b> Short quantities were detected, so the remaining items were re-ordered to re-maximize pallet fill.</div>`:'';
+    let h=`<div class="p-6 max-w-xl mx-auto"><div class="flex items-center justify-between mb-4"><h3 class="font-display font-black text-2xl">Pick complete</h3>
+      <button onclick="window._app.picker=null;window._app._bump++" class="text-sm text-gray-400">← back to lists</button></div>${note}
+      <div class="bg-white rounded-2xl border border-gray-200 overflow-hidden mb-4"><table class="w-full text-base"><thead class="bg-gray-50 text-xs uppercase text-gray-400"><tr><th class="text-left px-3 py-2">Product</th><th class="px-3 py-2">Req</th><th class="px-3 py-2">Picked</th><th class="px-3 py-2">Status</th></tr></thead><tbody>`;
+    results.forEach(r=>{h+=`<tr class="border-t border-gray-100"><td class="px-3 py-2 font-medium">${r.name}</td><td class="px-3 py-2 text-center font-mono">${r.cases}</td><td class="px-3 py-2 text-center font-mono ${r.short>0?'text-[var(--red)] font-bold':''}">${r.picked}</td><td class="px-3 py-2 text-center">${r.short>0?`<span class="text-xs font-bold text-[var(--red)]">SHORT ${r.short}</span>`:`<span class="text-xs font-bold text-[var(--green)]">OK</span>`}</td></tr>`;});
+    h+=`</tbody></table></div>
+      <div class="rounded-2xl ${disc.length?'border-2 border-[var(--amber)] bg-amber-50':'border border-[var(--green)] bg-green-50'} p-4 text-center">
+      ${disc.length?`<div class="font-display font-bold text-[var(--amber)] text-lg">Submitted with ${disc.length} discrepanc${disc.length>1?'ies':'y'}</div><div class="text-sm text-gray-600 mt-1">Manager reviews & confirms (here or on the Handheld).</div>`:`<div class="font-display font-bold text-[var(--green)] text-lg">✓ Submitted — all items picked in full</div>`}</div></div>`;
+    return h;
+  },
+
+  /* ---------- manager handheld ---------- */
+  handheldHtml(){
+    this._bump;
+    return `<div class="bg-white border-b border-gray-100 px-4 py-2 flex items-center gap-2 text-xs">
+        <span class="font-semibold text-gray-500">Select pallets → assign to a device · review picked pallets to confirm</span>
+      </div>`+this.pickListPanelHtml({device:null,role:'manager'});
+  },
+  // confirm / discrepancy resolution for a picked pallet
+  openConfirm(palletId){
+    const a=this.palletAssign[palletId];if(!a||!a.results){this.flash('Nothing to confirm.','warn');return;}
+    const disc=a.results.filter(r=>r.short>0);
+    const pal=this.allPallets().find(p=>p.id===palletId);
+    // editable picked-qty rows (manager can correct what the picker entered)
+    let rows=a.results.map((r,ri)=>`<tr class="border-t border-gray-100">
+      <td class="px-2 py-1.5 font-medium">${r.name}</td>
+      <td class="px-2 py-1.5 text-center font-mono">${r.cases}</td>
+      <td class="px-2 py-1.5">
+        <div class="flex items-center justify-center gap-1.5">
+          <button onclick="window._app.editPicked('${palletId}',${ri},-1)" class="w-6 h-6 rounded border border-gray-200 font-bold leading-none">−</button>
+          <span class="w-9 text-center font-mono font-bold ${r.short>0?'text-[var(--red)]':(r.picked>r.cases?'text-[var(--amber)]':'text-[var(--green)]')}">${r.picked}</span>
+          <button onclick="window._app.editPicked('${palletId}',${ri},1)" class="w-6 h-6 rounded border border-gray-200 font-bold leading-none">+</button>
+        </div>
+      </td></tr>`).join('');
+    let discRows = disc.map((d,i)=>{
+      const gi=a.results.indexOf(d);
+      if(d._resolved)return `<div class="rounded-lg bg-gray-50 border border-gray-100 p-2.5 mb-2"><div class="text-sm font-semibold text-gray-500">${d._resolution==='discard'?'✓ Shortfall discarded':'✓ Saved as back order'} — ${d.short}× ${d.name}</div></div>`;
+      return `<div class="rounded-lg bg-red-50 border border-red-100 p-2.5 mb-2" data-disc="${i}">
+      <div class="text-sm font-semibold">${d.name} <span class="text-[var(--red)]">short ${d.short} of ${d.cases}</span></div>
+      <div class="flex gap-2 mt-2">
+        <button onclick="window._app.resolveDisc('${palletId}',${gi},'discard',this)" class="flex-1 text-xs font-semibold px-2 py-2 rounded border border-gray-300 bg-white">Discard shortfall</button>
+        <button onclick="window._app.resolveDisc('${palletId}',${gi},'backorder',this)" class="flex-1 text-xs font-semibold px-2 py-2 rounded bg-[var(--blue)] text-white">Save as back order</button>
+      </div></div>`;}).join('');
+    this.modalOpen(`<h3 class="font-display font-bold text-lg mb-1">Confirm picked pallet</h3>
+      <div class="text-xs text-gray-500 mb-2">${pal?pal.routeName+' · '+pal.groupLabel+' · '+pal.palLabel:palletId}</div>
+      <div class="text-[11px] text-gray-400 mb-2">Adjust picked quantities with ± if the count is off, then handle any remaining shortfall below.</div>
+      <div class="border border-gray-100 rounded-lg overflow-hidden mb-3"><table class="w-full text-sm"><thead class="bg-gray-50 text-[10px] uppercase text-gray-400"><tr><th class="text-left px-2 py-1">Product</th><th class="px-2 py-1">Req</th><th class="px-2 py-1">Picked (editable)</th></tr></thead><tbody>${rows}</tbody></table></div>
+      <div id="discZone">${disc.length?`<div class="text-xs font-bold text-[var(--amber)] mb-1.5">${disc.length} shortfall(s) — choose what to do with each:</div>${discRows}`:`<div class="text-sm text-[var(--green)] font-semibold mb-2">✓ No discrepancies — picked in full.</div>`}</div>
+      <div class="flex gap-2 mt-3"><button onclick="window._app.closeModal()" class="flex-1 py-2 rounded-lg border border-gray-200 font-semibold text-sm">Close</button>
+      <button onclick="window._app.confirmPallet('${palletId}')" class="flex-1 py-2 rounded-lg bg-ink text-white font-semibold text-sm">Confirm pallet ✓</button></div>`,true);
+  },
+  editPicked(palletId,ri,delta){
+    const a=this.palletAssign[palletId];if(!a||!a.results[ri])return;
+    const r=a.results[ri];
+    const nv=Math.max(0,Math.min(r.cases,r.picked+delta)); // clamp 0..required
+    r.picked=nv;r.short=r.cases-nv;
+    if(r.short<=0)r._resolved=false; // no longer a shortfall; clear any prior resolution flag
+    this.palletAssign={...this.palletAssign};
+    this.openConfirm(palletId); // re-render modal from state (steppers persist because state-backed)
+  },
+  resolveDisc(palletId,gi,mode,btn){
+    const a=this.palletAssign[palletId];const disc=a.results[gi];if(!disc||disc.short<=0||disc._resolved)return;
+    if(mode==='discard'){this.flash(`Discarded shortfall: ${disc.short}× ${this.PM()[disc.code].name}.`,'warn');}
+    else{
+      const no='BO-'+String(this.backSeq++).padStart(3,'0');
+      ORDERS.push({id:no,customer:'(back order)',area:'—',zip:'22701',kind:'backorder',received:'pending stock',lines:[{code:disc.code,cases:disc.short}],coord:_coord({zip:'22701'})});
+      this.flash(`Back order ${no} created for ${disc.short}× ${this.PM()[disc.code].name} (locked until in stock).`);
+    }
+    disc._resolved=true;disc._resolution=mode;
+    this.palletAssign={...this.palletAssign};
+    this.openConfirm(palletId);
+  },
+  confirmPallet(palletId){
+    const a=this.palletAssign[palletId];if(!a)return;
+    const disc=(a.results||[]).filter(r=>r.short>0&&!r._resolved);
+    if(disc.length){this.flash('Resolve each discrepancy (discard or back order) first.','warn');return;}
+    this.palletAssign[palletId]={...a,status:'confirmed'};this.palletAssign={...this.palletAssign};
+    this.closeModal();this._bump++;this.flash('Pallet confirmed.');
+  },
+
+  /* ---------- list-level review & confirm (whole pick list at once) ---------- */
+  openListConfirm(key){
+    const list=this.pickLists().find(l=>l.key===key);if(!list){this.flash('Pick list not found.','warn');return;}
+    if(this.listStatus(list)!=='picked'){this.flash('This list is not ready to confirm yet.','warn');return;}
+    // build/reuse a merged review structure for this list
+    if(!this.listReview[key]){ this.listReview[key]=this.listResults(list).map(r=>({code:r.code,name:r.name,cat:r.cat,cases:r.cases,picked:r.picked,short:r.cases-r.picked,_resolved:(r.cases-r.picked)<=0,_resolution:null})); }
+    const rev=this.listReview[key];
+    let rows=rev.map((r,ri)=>`<tr class="border-t border-gray-100">
+      <td class="px-2 py-1.5 font-medium">${r.name}</td>
+      <td class="px-2 py-1.5 text-center font-mono">${r.cases}</td>
+      <td class="px-2 py-1.5">
+        <div class="flex items-center justify-center gap-1.5">
+          <button onclick="window._app.editListQty('${key}',${ri},-1)" class="w-6 h-6 rounded border border-gray-200 font-bold leading-none">−</button>
+          <span class="w-9 text-center font-mono font-bold ${r.short>0?'text-[var(--red)]':'text-[var(--green)]'}">${r.picked}</span>
+          <button onclick="window._app.editListQty('${key}',${ri},1)" class="w-6 h-6 rounded border border-gray-200 font-bold leading-none">+</button>
+        </div>
+      </td></tr>`).join('');
+    const disc=rev.filter(r=>r.short>0);
+    let discRows=disc.map((d)=>{
+      const ri=rev.indexOf(d);
+      if(d._resolved)return `<div class="rounded-lg bg-gray-50 border border-gray-100 p-2.5 mb-2"><div class="text-sm font-semibold text-gray-500">${d._resolution==='discard'?'✓ Shortfall discarded':'✓ Saved as back order'} — ${d.short}× ${d.name}</div></div>`;
+      return `<div class="rounded-lg bg-red-50 border border-red-100 p-2.5 mb-2">
+        <div class="text-sm font-semibold">${d.name} <span class="text-[var(--red)]">short ${d.short} of ${d.cases}</span></div>
+        <div class="flex gap-2 mt-2">
+          <button onclick="window._app.resolveListDisc('${key}',${ri},'discard')" class="flex-1 text-xs font-semibold px-2 py-2 rounded border border-gray-300 bg-white">Discard shortfall</button>
+          <button onclick="window._app.resolveListDisc('${key}',${ri},'backorder')" class="flex-1 text-xs font-semibold px-2 py-2 rounded bg-[var(--blue)] text-white">Save as back order</button>
+        </div></div>`;}).join('');
+    const unresolved=disc.filter(d=>!d._resolved).length;
+    this.modalOpen(`<h3 class="font-display font-bold text-lg mb-1">Review &amp; confirm pick list</h3>
+      <div class="text-xs text-gray-500 mb-2">${list.routeName} · ${this.deviceName(list.device)} · ${list.pallets.length} pallet(s)</div>
+      <div class="text-[11px] text-gray-400 mb-2">All products across this list's pallets. Adjust picked qty with ± if the count is off, then handle any shortfall.</div>
+      <div class="border border-gray-100 rounded-lg overflow-hidden mb-3"><table class="w-full text-sm"><thead class="bg-gray-50 text-[10px] uppercase text-gray-400"><tr><th class="text-left px-2 py-1">Product</th><th class="px-2 py-1">Req</th><th class="px-2 py-1">Picked (editable)</th></tr></thead><tbody>${rows}</tbody></table></div>
+      ${disc.length?`<div class="text-xs font-bold text-[var(--amber)] mb-1.5">${disc.length} shortfall(s):</div>${discRows}`:`<div class="text-sm text-[var(--green)] font-semibold mb-2">✓ No discrepancies — picked in full.</div>`}
+      <div class="flex gap-2 mt-3"><button onclick="window._app.closeModal()" class="flex-1 py-2 rounded-lg border border-gray-200 font-semibold text-sm">Close</button>
+      <button onclick="window._app.confirmList('${key}')" class="flex-1 py-2 rounded-lg ${unresolved?'bg-gray-300':'bg-ink'} text-white font-semibold text-sm">Confirm list ✓</button></div>`,true);
+  },
+  editListQty(key,ri,delta){
+    const rev=this.listReview[key];if(!rev||!rev[ri])return;const r=rev[ri];
+    r.picked=Math.max(0,Math.min(r.cases,r.picked+delta));r.short=r.cases-r.picked;
+    if(r.short<=0){r._resolved=true;r._resolution=null;} else if(r._resolution==null){r._resolved=false;}
+    this.listReview={...this.listReview};this.openListConfirm(key);
+  },
+  resolveListDisc(key,ri,mode){
+    const rev=this.listReview[key];const d=rev[ri];if(!d||d.short<=0||d._resolved)return;
+    if(mode==='discard'){this.flash(`Discarded shortfall: ${d.short}× ${d.name}.`,'warn');}
+    else{const no='BO-'+String(this.backSeq++).padStart(3,'0');
+      ORDERS.push({id:no,customer:'(back order)',area:'—',zip:'22701',kind:'backorder',received:'pending stock',lines:[{code:d.code,cases:d.short}],coord:_coord({zip:'22701'})});
+      this.flash(`Back order ${no} created for ${d.short}× ${d.name} (locked until in stock).`);}
+    d._resolved=true;d._resolution=mode;this.listReview={...this.listReview};this.openListConfirm(key);
+  },
+  confirmList(key){
+    const rev=this.listReview[key];const list=this.pickLists().find(l=>l.key===key);if(!list)return;
+    const unresolved=(rev||[]).filter(r=>r.short>0&&!r._resolved).length;
+    if(unresolved){this.flash('Resolve each shortfall (discard or back order) first.','warn');return;}
+    list.pallets.forEach(p=>{const a=this.palletAssign[p.id];if(a)this.palletAssign[p.id]={...a,status:'confirmed'};});
+    this.palletAssign={...this.palletAssign};delete this.listReview[key];this.listReview={...this.listReview};
+    this.closeModal();this._bump++;this.flash('Pick list confirmed.');
+  },
+
+  /* ---------- configuration ---------- */
+  onCfgTab(){this.$nextTick(()=>this.wireCfgSortables());},
+  cfgHtml(){
+    this._bump;
+    const t=this.cfgTab;
+    if(t==='Catalog')return this.cfgCatalog();
+    if(t==='Stability Ranking')return this.cfgStability();
+    if(t==='Catalog Pick Order')return this.cfgPickOrder();
+    if(t==='Truck Types')return this.cfgTrucks();
+    if(t==='Drivers')return this.cfgDrivers();
+    if(t==='Devices')return this.cfgDevices();
+    if(t==='Route Templates')return this.cfgTemplates();
+  },
+  cfgCatalog(){
+    let h=`<div class="max-w-5xl"><div class="flex items-center gap-3 mb-4"><h3 class="font-display font-bold text-lg">Catalog</h3>
+      <button onclick="window._app.addCategory()" class="text-xs font-semibold bg-[var(--blue)] text-white px-2.5 py-1.5 rounded">+ Category</button>
+      <button onclick="window._app.addProduct()" class="text-xs font-semibold border border-gray-300 px-2.5 py-1.5 rounded">+ Product</button></div>`;
+    // categories with sizes/flavors
+    h+=`<div class="grid grid-cols-5 gap-2 mb-5">`;
+    Object.entries(CATALOG).forEach(([cat,d])=>{
+      h+=`<div class="ref-target rounded-lg border border-gray-200 bg-white p-2.5" data-refid="category:${cat}">
+        <div class="flex items-center gap-1.5 mb-1.5"><span class="w-3 h-3 rounded" style="background:${CAT_COLOR[cat]||'#999'}"></span><span class="font-bold text-sm">${cat}</span></div>
+        <div class="text-[10px] text-gray-400 uppercase font-semibold">Sizes</div>
+        <div class="flex flex-wrap gap-1 mb-1.5 mt-0.5">${d.sizes.map(s=>`<span class="text-[10px] bg-gray-100 rounded px-1.5 py-0.5">${s}</span>`).join('')}<button onclick="window._app.addSF('${cat}','sizes')" class="text-[10px] text-[var(--blue)] font-bold">+</button></div>
+        <div class="text-[10px] text-gray-400 uppercase font-semibold">Flavors</div>
+        <div class="flex flex-wrap gap-1 mt-0.5">${d.flavors.map(s=>`<span class="text-[10px] bg-gray-100 rounded px-1.5 py-0.5">${s}</span>`).join('')}<button onclick="window._app.addSF('${cat}','flavors')" class="text-[10px] text-[var(--blue)] font-bold">+</button></div>
+      </div>`;
+    });
+    h+=`</div>`;
+    // product table
+    h+=`<div class="rounded-lg border border-gray-200 bg-white overflow-hidden"><table class="cfg w-full"><thead><tr><th>Code</th><th>Name</th><th>Category</th><th>Size</th><th>Flavor</th><th>Cases/Pallet</th><th>Deposit</th><th>Stock</th><th></th></tr></thead><tbody>`;
+    PRODUCTS.forEach(p=>{
+      h+=`<tr class="ref-target" data-refid="product:${p.code}"><td class="font-mono text-xs text-gray-400">${p.code}</td><td class="font-semibold">${p.name}</td>
+        <td><span class="inline-flex items-center gap-1"><span class="w-2 h-2 rounded-full" style="background:${CAT_COLOR[p.category]}"></span>${p.category}</span></td>
+        <td>${p.size}</td><td>${p.flavor}</td>
+        <td><input type="number" value="${p.casesPerPallet}" onchange="window._app.editCPP('${p.code}',this.value)" class="w-16 border border-gray-200 rounded px-1 py-0.5 text-xs"></td>
+        <td class="font-mono text-xs">$${p.deposit}</td><td class="font-mono text-xs">${p.stock}</td>
+        <td><button onclick="window._app.editProduct('${p.code}')" class="text-[var(--blue)] text-xs font-semibold">edit</button></td></tr>`;
+    });
+    h+=`</tbody></table></div></div>`;
+    return h;
+  },
+  addCategory(){const n=prompt('New category name?');if(!n)return;if(CATALOG[n]){this.flash('Exists','warn');return;}CATALOG[n]={sizes:[],flavors:[]};CAT_COLOR[n]='#64748b';this._bump++;this.flash('Added category '+n);},
+  addSF(cat,which){const v=prompt('New '+which.slice(0,-1)+' for '+cat+'?');if(!v)return;if(!CATALOG[cat][which].includes(v))CATALOG[cat][which].push(v);this._bump++;},
+  editCPP(code,val){const p=PRODUCTS.find(x=>x.code===code);p.casesPerPallet=Math.max(1,parseInt(val)||1);this._bump++;this.flash('Updated cases/pallet for '+p.name);},
+  addProduct(){
+    const cats=Object.keys(CATALOG);
+    this.modalOpen(`<h3 class="font-display font-bold text-lg mb-3">New Product</h3>
+      <div class="space-y-2 text-sm">
+      <div><label class="text-xs font-semibold text-gray-500">Name</label><input id="npName" class="w-full border border-gray-200 rounded px-2 py-1.5"></div>
+      <div class="grid grid-cols-3 gap-2">
+        <div><label class="text-xs font-semibold text-gray-500">Category</label><select id="npCat" onchange="window._app.npSync()" class="w-full border border-gray-200 rounded px-2 py-1.5">${cats.map(c=>`<option>${c}</option>`).join('')}</select></div>
+        <div><label class="text-xs font-semibold text-gray-500">Size</label><select id="npSize" class="w-full border border-gray-200 rounded px-2 py-1.5"></select></div>
+        <div><label class="text-xs font-semibold text-gray-500">Flavor</label><select id="npFlavor" class="w-full border border-gray-200 rounded px-2 py-1.5"></select></div>
+      </div>
+      <div class="grid grid-cols-3 gap-2">
+        <div><label class="text-xs font-semibold text-gray-500">Cases/Pallet</label><input id="npCPP" type="number" value="48" class="w-full border border-gray-200 rounded px-2 py-1.5"></div>
+        <div><label class="text-xs font-semibold text-gray-500">Deposit</label><input id="npDep" type="number" value="100" class="w-full border border-gray-200 rounded px-2 py-1.5"></div>
+        <div><label class="text-xs font-semibold text-gray-500">Stock</label><input id="npStock" type="number" value="100" class="w-full border border-gray-200 rounded px-2 py-1.5"></div>
+      </div>
+      <p class="text-[11px] text-gray-400">Code auto-generated · added to bottom of stability & pick order (adjust on those tabs).</p></div>
+      <div class="flex gap-2 mt-4"><button onclick="window._app.closeModal()" class="flex-1 py-2 rounded-lg border border-gray-200 font-semibold text-sm">Cancel</button>
+      <button onclick="window._app.saveProduct()" class="flex-1 py-2 rounded-lg bg-[var(--blue)] text-white font-semibold text-sm">Create</button></div>`);
+    this.$nextTick(()=>this.npSync());
+  },
+  npSync(){const cat=document.getElementById('npCat').value;const d=CATALOG[cat];document.getElementById('npSize').innerHTML=d.sizes.map(s=>`<option>${s}</option>`).join('');document.getElementById('npFlavor').innerHTML=d.flavors.map(s=>`<option>${s}</option>`).join('');},
+  saveProduct(){
+    const cat=document.getElementById('npCat').value;
+    const prefix={Soda:'1',Water:'2',Juice:'3',Energy:'4',Beer:'5'}[cat]||'9';
+    const code=prefix+String(Math.floor(1000+Math.random()*8999));
+    const p={code,name:document.getElementById('npName').value||'New Product',category:cat,size:document.getElementById('npSize').value,flavor:document.getElementById('npFlavor').value,casesPerPallet:parseInt(document.getElementById('npCPP').value)||48,stabilityRank:PRODUCTS.length+1,deposit:parseInt(document.getElementById('npDep').value)||0,stock:parseInt(document.getElementById('npStock').value)||0};
+    PRODUCTS.push(p);this.catalogPickOrder.push(code);this.closeModal();this._bump++;this.flash('Created '+p.name+' ('+code+')');
+  },
+  editProduct(code){const p=PRODUCTS.find(x=>x.code===code);const n=prompt('Product name:',p.name);if(n)p.name=n;this._bump++;},
+  cfgStability(){
+    const sorted=[...PRODUCTS].sort((a,b)=>a.stabilityRank-b.stabilityRank);
+    let h=`<div class="max-w-2xl"><h3 class="font-display font-bold text-lg mb-1">Global Stability Ranking</h3>
+      <p class="text-xs text-gray-500 mb-3">Drag to reorder. This single global list applies to every pallet regardless of category.</p>
+      <div class="flex items-center gap-2 mb-2 text-[10px] font-bold uppercase"><span class="text-[var(--red)]">↓ Bottom (least stable)</span><div class="flex-1 h-1.5 rounded stab-grad"></div><span class="text-[var(--green)]">Top (most stable) ↑</span></div>
+      <div id="stabList" class="space-y-1">`;
+    sorted.forEach((p,i)=>{h+=`<div class="stab-row flex items-center gap-2 bg-white border border-gray-200 rounded-lg px-3 py-2 cursor-grab" data-code="${p.code}">
+      <span class="text-gray-300">⠿</span><span class="font-mono text-xs text-gray-400 w-8">#${i+1}</span>
+      <span class="w-2.5 h-2.5 rounded-full" style="background:${CAT_COLOR[p.category]}"></span>
+      <span class="font-semibold text-sm flex-1">${p.name}</span><span class="text-xs text-gray-400">${p.category} · ${p.size}</span></div>`;});
+    h+=`</div></div>`;return h;
+  },
+  cfgPickOrder(){
+    const pm=this.PM();
+    let h=`<div class="max-w-2xl"><h3 class="font-display font-bold text-lg mb-1">Catalog Pick Order</h3>
+      <p class="text-xs text-gray-500 mb-3">Drag to match your physical warehouse layout. Controls the sequence products appear on every pick list. Separate from stability.</p>
+      <div id="pickList" class="space-y-1">`;
+    this.catalogPickOrder.forEach((code,i)=>{const p=pm[code];if(!p)return;h+=`<div class="pick-row flex items-center gap-2 bg-white border border-gray-200 rounded-lg px-3 py-2 cursor-grab" data-code="${code}">
+      <span class="text-gray-300">⠿</span><span class="font-mono text-xs text-gray-400 w-8">${i+1}.</span>
+      <span class="w-2.5 h-2.5 rounded-full" style="background:${CAT_COLOR[p.category]}"></span>
+      <span class="font-semibold text-sm flex-1">${p.name}</span><span class="font-mono text-xs text-gray-400">${code}</span></div>`;});
+    h+=`</div></div>`;return h;
+  },
+  cfgTrucks(){
+    let h=`<div class="max-w-xl"><div class="flex items-center gap-3 mb-3"><h3 class="font-display font-bold text-lg">Truck Types</h3>
+      <button onclick="window._app.addTruck()" class="text-xs font-semibold bg-[var(--blue)] text-white px-2.5 py-1.5 rounded">+ Add</button></div>
+      <div class="rounded-lg border border-gray-200 bg-white overflow-hidden"><table class="cfg w-full"><thead><tr><th>Name</th><th>Pallet Capacity</th><th></th></tr></thead><tbody>`;
+    this.trucks.forEach((t,i)=>{h+=`<tr class="ref-target" data-refid="truck:${t.name}"><td class="font-semibold">${t.name}</td>
+      <td><input type="number" value="${t.capacity}" onchange="window._app.trucks[${i}].capacity=parseInt(this.value)||1;window._app._bump++" class="w-20 border border-gray-200 rounded px-1.5 py-0.5 text-xs"></td>
+      <td><button onclick="window._app.delTruck(${i})" class="text-[var(--red)] text-xs font-semibold">delete</button></td></tr>`;});
+    h+=`</tbody></table></div></div>`;return h;
+  },
+  addTruck(){const n=prompt('Truck type name?');if(!n)return;const c=parseInt(prompt('Capacity?','8'));if(!c)return;this.trucks.push({name:n,capacity:c});this._bump++;},
+  delTruck(i){if(this.trucks.length<=1){this.flash('Keep at least one.','warn');return;}this.trucks.splice(i,1);this._bump++;},
+  cfgDrivers(){
+    let h=`<div class="max-w-md"><div class="flex items-center gap-3 mb-3"><h3 class="font-display font-bold text-lg">Drivers</h3>
+      <button onclick="window._app.addDriver()" class="text-xs font-semibold bg-[var(--blue)] text-white px-2.5 py-1.5 rounded">+ Add</button></div>
+      <div class="space-y-1.5">`;
+    this.drivers.forEach((d,i)=>{h+=`<div class="ref-target flex items-center gap-2 bg-white border border-gray-200 rounded-lg px-3 py-2" data-refid="driver:${i}">
+      <span class="w-7 h-7 rounded-full bg-ink text-white text-xs font-bold flex items-center justify-center">${d.split(' ').map(x=>x[0]).join('')}</span>
+      <span class="font-semibold text-sm flex-1">${d}</span>
+      <button onclick="window._app.editDriver(${i})" class="text-[var(--blue)] text-xs font-semibold">rename</button>
+      <button onclick="window._app.drivers.splice(${i},1);window._app._bump++" class="text-[var(--red)] text-xs font-semibold">remove</button></div>`;});
+    h+=`</div></div>`;return h;
+  },
+  addDriver(){const n=prompt('Driver name?');if(n){this.drivers.push(n);this._bump++;}},
+  editDriver(i){const n=prompt('Rename driver:',this.drivers[i]);if(n){this.drivers[i]=n;this._bump++;}},
+  cfgDevices(){
+    let h=`<div class="max-w-3xl"><div class="flex items-center gap-3 mb-4"><h3 class="font-display font-bold text-lg">Warehouse Devices</h3>
+      <button onclick="window._app.registerDevice()" class="text-xs font-semibold bg-[var(--blue)] text-white px-2.5 py-1.5 rounded">📲 Register new device</button></div>
+      <!-- warehouse settings -->
+      <div class="rounded-lg border border-gray-200 bg-white p-3 mb-4 grid grid-cols-2 gap-3">
+        <div><label class="text-[10px] font-bold uppercase text-gray-400">Warehouse GPS</label>
+          <div class="flex gap-1 mt-0.5"><input value="${this.warehouse.lat}" onchange="window._app.warehouse.lat=parseFloat(this.value)" class="w-full border border-gray-200 rounded px-2 py-1 text-xs font-mono">
+          <input value="${this.warehouse.lng}" onchange="window._app.warehouse.lng=parseFloat(this.value)" class="w-full border border-gray-200 rounded px-2 py-1 text-xs font-mono"></div>
+          <p class="text-[10px] text-gray-400 mt-1">Used for GPS-distance auto-revoke check.</p></div>
+        <div><label class="text-[10px] font-bold uppercase text-gray-400">Warehouse WiFi network</label>
+          <input value="${this.warehouse.wifi}" onchange="window._app.warehouse.wifi=this.value;window._app._bump++" class="w-full border border-gray-200 rounded px-2 py-1 text-xs mt-0.5">
+          <p class="text-[10px] text-gray-400 mt-1">A device on a different network is auto-revoked.</p></div>
+      </div>
+      <div class="rounded-lg border border-gray-200 bg-white overflow-hidden"><table class="cfg w-full"><thead><tr><th>#</th><th>Name</th><th>Status</th><th>Last seen</th><th>Location</th><th>WiFi</th><th>Simulate</th><th></th></tr></thead><tbody>`;
+    this.devices.forEach((d,i)=>{
+      const revoked=d.status==='Revoked';
+      h+=`<tr class="ref-target" data-refid="device:${d.num}"><td class="font-mono">${d.num}</td><td class="font-semibold">${d.name}</td>
+        <td><span class="text-[10px] font-bold px-1.5 py-0.5 rounded ${revoked?'bg-red-100 text-[var(--red)]':'bg-green-100 text-[var(--green)]'}">${d.status}</span></td>
+        <td class="text-xs text-gray-500">${d.lastSeen}</td><td class="text-xs">${d.location}</td>
+        <td class="text-xs font-mono ${d.wifi!==this.warehouse.wifi?'text-[var(--red)]':''}">${d.wifi}</td>
+        <td class="text-xs"><div class="flex gap-1">
+          <button onclick="window._app.simWifi(${i})" class="border border-gray-200 rounded px-1.5 py-0.5 hover:bg-gray-50" title="toggle wifi">wifi</button>
+          <button onclick="window._app.simGps(${i})" class="border border-gray-200 rounded px-1.5 py-0.5 hover:bg-gray-50" title="toggle gps/disconnect">gps</button>
+        </div></td>
+        <td class="text-xs"><div class="flex gap-1.5">
+          <button onclick="window._app.renameDevice(${i})" class="text-[var(--blue)] font-semibold">rename</button>
+          ${revoked?`<button onclick="window._app.reactivate(${i})" class="text-[var(--green)] font-semibold">reactivate</button>`:`<button onclick="window._app.revokeDevice(${i})" class="text-[var(--red)] font-semibold">revoke</button>`}
+        </div></td></tr>`;
+    });
+    h+=`</tbody></table></div>
+      <p class="text-[11px] text-gray-400 mt-2">Auto-revoke rules: different WiFi network → revoke · disconnected AND GPS far from warehouse → revoke · brief disconnect while GPS near → stays active. Use the <b>Simulate</b> buttons to demo each case.</p></div>`;
+    return h;
+  },
+  registerDevice(){
+    const code=Math.random().toString(36).slice(2,8).toUpperCase();
+    const key='WH-'+Math.random().toString(36).slice(2,14).toUpperCase();
+    const num=this.deviceSeq++;
+    this.modalOpen(`<h3 class="font-display font-bold text-lg mb-3">Register New Device</h3>
+      <div class="space-y-3 text-sm">
+        <div class="rounded-lg bg-ink text-white p-4 text-center font-mono">
+          <div class="text-[10px] text-gray-400 uppercase">Scan this registration code on the device</div>
+          <div class="text-3xl font-black tracking-widest my-2">${code}</div>
+          <div class="text-[10px] text-gray-400">⟳ downloading key…</div>
+          <div class="text-xs mt-1 break-all text-green-300">${key}</div>
+        </div>
+        <div class="bg-panel rounded-lg p-2.5"><div class="text-xs">Device will register as sequential number <b>Device ${num}</b>.</div></div>
+        <div><label class="text-xs font-semibold text-gray-500">Friendly name</label><input id="regName" value="Device ${num}" class="w-full border border-gray-200 rounded px-2 py-1.5 mt-0.5"></div>
+      </div>
+      <div class="flex gap-2 mt-4"><button onclick="window._app.closeModal()" class="flex-1 py-2 rounded-lg border border-gray-200 font-semibold text-sm">Cancel</button>
+      <button onclick="window._app.finishRegister(${num})" class="flex-1 py-2 rounded-lg bg-[var(--blue)] text-white font-semibold text-sm">Complete registration</button></div>`);
+  },
+  finishRegister(num){const name=document.getElementById('regName').value||('Device '+num);this.devices.push({num,name,status:'Active',lastSeen:'just now',location:'in warehouse',wifi:this.warehouse.wifi,connected:true,gpsNear:true});this.closeModal();this._bump++;this.flash('Registered '+name);},
+  renameDevice(i){const n=prompt('Rename device:',this.devices[i].name);if(n){this.devices[i].name=n;this._bump++;}},
+  revokeDevice(i){this.devices[i].status='Revoked';this.flash('Device manually revoked.','warn');this._bump++;},
+  reactivate(i){const d=this.devices[i];d.status='Active';d.wifi=this.warehouse.wifi;d.connected=true;d.gpsNear=true;d.location='in warehouse';this._bump++;},
+  simWifi(i){const d=this.devices[i];d.wifi=d.wifi===this.warehouse.wifi?'GUEST-WIFI':this.warehouse.wifi;this.checkRevoke(i);this._bump++;},
+  simGps(i){const d=this.devices[i];d.connected=!d.connected;if(!d.connected){d.gpsNear=!d.gpsNear?true:false;}// toggling: simulate disconnect + far
+    if(!d.connected){d.gpsNear=false;d.location='disconnected · 40km away';}else{d.gpsNear=true;d.location='in warehouse';d.lastSeen='just now';}
+    this.checkRevoke(i);this._bump++;},
+  checkRevoke(i){const d=this.devices[i];if(d.status==='Revoked')return;
+    if(d.wifi!==this.warehouse.wifi){d.status='Revoked';this.flash(d.name+' auto-revoked: different WiFi network.','err');}
+    else if(!d.connected&&!d.gpsNear){d.status='Revoked';this.flash(d.name+' auto-revoked: disconnected & GPS far.','err');}
+  },
+  cfgTemplates(){
+    let h=`<div class="max-w-2xl"><div class="flex items-center gap-3 mb-3"><h3 class="font-display font-bold text-lg">Route Templates</h3>
+      <span class="text-xs text-gray-400">Settings only — stops are added per day.</span></div><div class="space-y-2">`;
+    this.templates.forEach((t,i)=>{h+=`<div class="ref-target rounded-lg border border-gray-200 bg-white p-3 flex items-center gap-3" data-refid="template:${i}">
+      <div class="flex-1"><div class="font-bold text-sm">${t.name}</div>
+      <div class="text-[11px] text-gray-500 mt-0.5">${t.truckType} · ${t.loading} · ${t.packing} · ${t.driver}</div></div>
+      <button onclick="window._app.applyTemplateNew(${i})" class="text-xs font-semibold bg-[var(--blue)] text-white px-2.5 py-1.5 rounded">Apply → new route</button>
+      <button onclick="window._app.templates.splice(${i},1);window._app._bump++" class="text-[var(--red)] text-xs font-semibold">delete</button></div>`;});
+    h+=`</div></div>`;return h;
+  },
+  applyTemplateNew(i){const t=this.templates[i];this.routes.push({id:'R'+(this.routeSeq++),name:t.name+' '+this.routeSeq,truckType:t.truckType,loading:t.loading,packing:t.packing,driver:t.driver,color:ROUTE_COLORS[this.routes.length%ROUTE_COLORS.length],stops:[],packGroups:[],separated:[],backToMixed:{},confirmed:false,scheduled:null});this.screen='dashboard';this.selectedRoute=this.routes[this.routes.length-1].id;this.flash('Created route from template "'+t.name+'".');},
+
+  /* ---------- demo map (offline SVG, shown while arranging) ---------- */
+  demoMapHtml(){
+    this._bump; this.selectedRoute; this.routes; this.selectedOrder;
+    const W=560,H=190,pad=22;
+    // project lat/lng of all visible points into the viewBox
+    const pts=[];
+    ORDERS.forEach(o=>{ if(o.coord) pts.push(o.coord); });
+    if(pts.length===0)return `<div class="text-[11px] text-gray-400 text-center py-6">No orders to map.</div>`;
+    let minLa=Math.min(...pts.map(p=>p[0])),maxLa=Math.max(...pts.map(p=>p[0]));
+    let minLo=Math.min(...pts.map(p=>p[1])),maxLo=Math.max(...pts.map(p=>p[1]));
+    if(maxLa-minLa<0.01){minLa-=0.3;maxLa+=0.3;} if(maxLo-minLo<0.01){minLo-=0.3;maxLo+=0.3;}
+    const px=lo=>pad+(lo-minLo)/(maxLo-minLo)*(W-2*pad);
+    const py=la=>pad+(maxLa-la)/(maxLa-minLa)*(H-2*pad); // invert: north up
+    const xy=c=>[px(c[1]),py(c[0])];
+
+    const assigned=new Set(this.routes.flatMap(r=>r.stops));
+    const sel=this.routes.find(r=>r.id===this.selectedRoute);
+
+    // decorative demo basemap: faux roads + river + warehouse
+    let g=`<svg viewBox="0 0 ${W} ${H}" width="100%" style="display:block;max-height:210px" font-family="Archivo,sans-serif">
+      <defs><pattern id="grid" width="28" height="28" patternUnits="userSpaceOnUse"><path d="M28 0H0V28" fill="none" stroke="#cdd8e2" stroke-width="1"/></pattern></defs>
+      <rect width="${W}" height="${H}" fill="#e3ebf2"/>
+      <rect width="${W}" height="${H}" fill="url(#grid)"/>
+      <path d="M0 60 Q140 40 280 95 T560 120" fill="none" stroke="#bcdcef" stroke-width="9" opacity="0.8"/>
+      <path d="M70 0 L120 ${H}" stroke="#fff" stroke-width="5" opacity="0.7"/>
+      <path d="M0 130 L${W} 110" stroke="#fff" stroke-width="5" opacity="0.7"/>
+      <path d="M360 0 L330 ${H}" stroke="#fff" stroke-width="4" opacity="0.6"/>
+      <text x="${W-8}" y="${H-8}" text-anchor="end" font-size="9" fill="#9aa7b4">demo map · illustrative</text>`;
+
+    // warehouse marker
+    const wxy=xy([this.warehouse.lat,this.warehouse.lng]);
+    g+=`<g transform="translate(${wxy[0]},${wxy[1]})"><rect x="-8" y="-8" width="16" height="16" rx="3" fill="#0f1419"/><text x="0" y="4" text-anchor="middle" font-size="10" fill="#fff">▣</text><text x="0" y="-12" text-anchor="middle" font-size="8" font-weight="700" fill="#0f1419">WH</text></g>`;
+
+    // route polylines (selected route solid+colored, others light grey)
+    this.routes.forEach(r=>{
+      if(r.stops.length<2)return;
+      const isSel=r.id===this.selectedRoute;
+      const d=r.stops.map((id,i)=>{const o=this.ord(id);const c=xy(o.coord);return (i?'L':'M')+c[0]+' '+c[1];}).join(' ');
+      g+=`<path d="${d}" fill="none" stroke="${isSel?r.color:'#c0cad4'}" stroke-width="${isSel?3:2}" stroke-linejoin="round" stroke-linecap="round" ${isSel?'':'stroke-dasharray="4 5"'} opacity="${isSel?0.95:0.6}"/>`;
+    });
+
+    // dots
+    const drawDot=(c,fill,label,sub,emph)=>{
+      const r=emph?12:10;
+      return `<g transform="translate(${c[0]},${c[1]})">
+        <circle r="${r+2}" fill="#000" opacity="0.12" cx="0" cy="1"/>
+        <circle r="${r}" fill="${fill}" stroke="#fff" stroke-width="2"/>
+        <text x="0" y="${r/3}" text-anchor="middle" font-size="${emph?11:10}" font-weight="800" fill="#fff">${label}</text>
+        ${sub?`<text x="0" y="${-r-3}" text-anchor="middle" font-size="8" font-weight="700" fill="#46535f">${sub}</text>`:''}
+      </g>`;
+    };
+
+    // selected route stops: colored + numbered in sequence
+    if(sel){
+      sel.stops.forEach((id,i)=>{ const o=this.ord(id); g+=drawDot(xy(o.coord),sel.color,String(i+1),o.zip,this.selectedOrder===id); });
+    }
+    // other routes' stops: grey, numbered by their own sequence
+    this.routes.forEach(r=>{ if(r.id===this.selectedRoute)return; r.stops.forEach((id,i)=>{ const o=this.ord(id); g+=drawDot(xy(o.coord),'#94a3b8',String(i+1),'',false); }); });
+    // unassigned orders: small hollow grey dots, no number
+    ORDERS.forEach(o=>{ if(assigned.has(o.id))return; const c=xy(o.coord);
+      g+=`<g transform="translate(${c[0]},${c[1]})"><circle r="5" fill="#cbd5e1" stroke="#fff" stroke-width="1.5"/></g>`; });
+
+    g+=`</svg>`;
+
+    // legend / caption
+    const legend = sel
+      ? `<span class="inline-flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full" style="background:${sel.color}"></span><b>${sel.name}</b> — optimized order, drag stops to re-sequence</span>`
+      : `<span>Select a route below to see its optimized path</span>`;
+    return `<div class="px-2 pt-1.5">${g}</div>
+      <div class="px-3 pb-2 flex items-center gap-3 text-[10px] text-gray-500 flex-wrap">
+        ${legend}
+        <span class="inline-flex items-center gap-1 ml-auto"><span class="w-2.5 h-2.5 rounded-full bg-[#94a3b8]"></span>other routes</span>
+        <span class="inline-flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-[#cbd5e1]"></span>unassigned</span>
+        <span class="inline-flex items-center gap-1"><span class="text-ink font-bold">▣</span>warehouse</span>
+      </div>`;
+  },
+
+  /* ---------- sortables ---------- */
+  wireStopSortables(){
+    document.querySelectorAll('[x-ref="dz"]').forEach(dz=>{
+      const rid=dz.dataset.routeid;
+      if(!dz._sortable){
+        dz._sortable=new Sortable(dz,{animation:150,draggable:'.stop-row',handle:'.stop-row',onEnd:()=>{const ids=[...dz.querySelectorAll('.stop-row')].map(x=>x.dataset.stopid);const r=this.routes.find(x=>x.id===rid);if(r){this.invalidateManual(r);r.stops=ids;this._bump++;}}});
+      }
+      // disable drag-reorder while picking stops to pack
+      dz._sortable.option('disabled', this.packMode===rid);
+    });
+  },
+  wireCfgSortables(){
+    const stab=document.getElementById('stabList');
+    if(stab&&!stab._sortable){stab._sortable=new Sortable(stab,{animation:150,draggable:'.stab-row',onEnd:()=>{const codes=[...stab.querySelectorAll('.stab-row')].map(x=>x.dataset.code);codes.forEach((c,i)=>{PRODUCTS.find(p=>p.code===c).stabilityRank=i+1;});this._bump++;this.flash('Stability ranking updated.');}});}
+    const pick=document.getElementById('pickList');
+    if(pick&&!pick._sortable){pick._sortable=new Sortable(pick,{animation:150,draggable:'.pick-row',onEnd:()=>{this.catalogPickOrder=[...pick.querySelectorAll('.pick-row')].map(x=>x.dataset.code);this._bump++;this.flash('Catalog pick order updated.');}});}
+  },
+
+  /* ---------- reference-click + rearrange DnD ---------- */
+  wireRefClicks(){
+    document.querySelectorAll('.ref-target').forEach(node=>{
+      if(node._refWired)return;node._refWired=true;
+      node.addEventListener('mouseenter',e=>{e.stopPropagation();document.querySelectorAll('.ref-hover').forEach(x=>x.classList.remove('ref-hover'));node.classList.add('ref-hover');});
+      node.addEventListener('mouseleave',()=>node.classList.remove('ref-hover'));
+      node.addEventListener('click',e=>{if(e.altKey){e.stopPropagation();e.preventDefault();document.querySelectorAll('.ref-pinned').forEach(x=>x.classList.remove('ref-pinned'));node.classList.add('ref-pinned');this.flash('Referenced '+(node.dataset.refid||'element')+' (would attach to chat)');}});
+    });
+    // rearrange drag for product chips
+    if(this.rearrange){
+      document.querySelectorAll('.prod-chip[draggable=true]').forEach(chip=>{
+        if(chip._dwired)return;chip._dwired=true;
+        chip.addEventListener('dragstart',e=>{e.dataTransfer.setData('text/plain',JSON.stringify({code:chip.dataset.code,g:+chip.dataset.g,p:+chip.dataset.p}));chip.style.opacity='.4';});
+        chip.addEventListener('dragend',e=>{chip.style.opacity='';});
+      });
+      document.querySelectorAll('[data-palletdrop]').forEach(z=>{
+        if(z._dwired)return;z._dwired=true;
+        z.addEventListener('dragover',e=>{e.preventDefault();z.classList.add('drag-over');});
+        z.addEventListener('dragleave',()=>z.classList.remove('drag-over'));
+        z.addEventListener('drop',e=>{e.preventDefault();z.classList.remove('drag-over');try{const d=JSON.parse(e.dataTransfer.getData('text/plain'));this.moveProduct(d.g,d.p,+z.dataset.g,+z.dataset.p,d.code);}catch(_){}});
+      });
+    }
+  },
+
+  /* ---------- modal confirm ---------- */
+  confirm(title,body,yesLabel,onYes){
+    this._confirmYes=onYes;
+    this.modalOpen(`<h3 class="font-display font-bold text-lg mb-2">${title}</h3><p class="text-sm text-gray-600 mb-4">${body}</p>
+      <div class="flex gap-2"><button onclick="window._app.closeModal()" class="flex-1 py-2 rounded-lg border border-gray-200 font-semibold text-sm">Cancel</button>
+      <button onclick="window._app._confirmYes&&window._app._confirmYes();window._app.closeModal()" class="flex-1 py-2 rounded-lg bg-[var(--blue)] text-white font-semibold text-sm">${yesLabel}</button></div>`);
+  },
+  _confirmYes:null,
+ };
+}
+// expose for inline onclick handlers in x-html content
+document.addEventListener('alpine:init',()=>{});
+window.addEventListener('DOMContentLoaded',()=>{
+  // bind global reference after Alpine mounts
+  const tryBind=()=>{const root=document.querySelector('[x-data]');if(root&&root._x_dataStack){window._app=root._x_dataStack[0];}else setTimeout(tryBind,50);};
+  tryBind();
+});
+</script>
+<script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.1/dist/cdn.min.js"></script>
+</body>
+</html>
